@@ -8,6 +8,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -88,6 +89,128 @@ class JacksonJsonCodecTest {
     @Test
     void rejectsNullInput() {
         assertThrows(NullPointerException.class, () -> codec.parse(null));
+    }
+
+    @Test
+    void enforcesUtf8ByteLimitForAsciiAndMultibyteInput() {
+        JacksonJsonCodec asciiLimited = new JacksonJsonCodec(4, 64);
+        assertEquals(JsonValue.of(1), asciiLimited.parse("1"));
+        assertEquals(JsonNull.instance(), asciiLimited.parse("null"));
+        assertThrows(JsonParseException.class, () -> asciiLimited.parse("true "));
+
+        JacksonJsonCodec multibyteLimited = new JacksonJsonCodec(5, 64);
+        assertEquals(JsonValue.of("a"), multibyteLimited.parse("\"a\""));
+        assertEquals(JsonValue.of("☃"), multibyteLimited.parse("\"☃\""));
+        assertThrows(JsonParseException.class, () -> multibyteLimited.parse("\"☃ \""));
+    }
+
+    @Test
+    void enforcesDefaultByteLimitAcrossEncoderBuffers() {
+        String atLimit = "\"" + "a".repeat(1_048_574) + "\"";
+        String aboveLimit = "\"" + "a".repeat(1_048_575) + "\"";
+
+        JsonString parsed = (JsonString) codec.parse(atLimit);
+        assertEquals(1_048_574, parsed.value().length());
+        assertThrows(JsonParseException.class, () -> codec.parse(aboveLimit));
+    }
+
+    @Test
+    void rejectsMalformedUtf16BeforeParsing() {
+        String unpairedHighSurrogate = String.valueOf((char) 0xD800);
+        String unpairedLowSurrogate = String.valueOf((char) 0xDC00);
+
+        JsonParseException highSurrogate = assertThrows(JsonParseException.class,
+                () -> codec.parse(unpairedHighSurrogate));
+        JsonParseException lowSurrogate = assertThrows(JsonParseException.class,
+                () -> codec.parse(unpairedLowSurrogate));
+
+        assertTrue(highSurrogate.getMessage().contains("malformed UTF-16"));
+        assertInstanceOf(java.nio.charset.CharacterCodingException.class, highSurrogate.getCause());
+        assertInstanceOf(java.nio.charset.CharacterCodingException.class, lowSurrogate.getCause());
+    }
+
+    @Test
+    void validatesConfiguredInputAndNestingLimits() {
+        assertThrows(IllegalArgumentException.class, () -> new JacksonJsonCodec(0, 1));
+        assertThrows(IllegalArgumentException.class, () -> new JacksonJsonCodec(-1, 1));
+        assertThrows(IllegalArgumentException.class, () -> new JacksonJsonCodec(1, -1));
+    }
+
+    @Test
+    void enforcesZeroNestingDepthForParsingAndSerialization() {
+        JacksonJsonCodec depthZero = new JacksonJsonCodec(100, 0);
+
+        assertEquals(JsonValue.of(true), depthZero.parse("true"));
+        assertEquals("1", depthZero.serialize(JsonValue.of(1)));
+
+        assertThrows(JsonParseException.class, () -> depthZero.parse("{}"));
+        assertThrows(JsonParseException.class, () -> depthZero.parse("[]"));
+        assertThrows(JsonSerializationException.class, () -> depthZero.serialize(JsonObject.of()));
+        assertThrows(JsonSerializationException.class, () -> depthZero.serialize(JsonArray.of()));
+    }
+
+    @Test
+    void enforcesContainerDepthForObjectsArraysAndMixedNesting() {
+        JacksonJsonCodec depthTwo = new JacksonJsonCodec(256, 2);
+
+        assertEquals(JsonArray.of(), depthTwo.parse("[]"));
+        assertEquals(JsonObject.of("items", JsonArray.of()), depthTwo.parse("{\"items\":[]}"));
+        assertEquals(JsonArray.of(JsonArray.of(JsonValue.of(0))), depthTwo.parse("[[0]]"));
+        assertThrows(JsonParseException.class, () -> depthTwo.parse("{\"outer\":{\"inner\":[]}}"));
+        assertThrows(JsonParseException.class, () -> depthTwo.parse("[[[]]]"));
+        assertThrows(JsonParseException.class, () -> depthTwo.parse("{\"items\":[{}]}"));
+
+        assertEquals("[]", depthTwo.serialize(JsonArray.of()));
+        assertEquals("{\"items\":[]}", depthTwo.serialize(JsonObject.of("items", JsonArray.of())));
+        assertEquals("[[0]]", depthTwo.serialize(JsonArray.of(JsonArray.of(JsonValue.of(0)))));
+        assertThrows(JsonSerializationException.class,
+                () -> depthTwo.serialize(JsonObject.of("outer", JsonObject.of("inner", JsonArray.of()))));
+        assertThrows(JsonSerializationException.class,
+                () -> depthTwo.serialize(JsonArray.of(JsonArray.of(JsonArray.of()))));
+        assertThrows(JsonSerializationException.class,
+                () -> depthTwo.serialize(JsonObject.of("items", JsonArray.of(JsonObject.of()))));
+    }
+
+    @Test
+    void enforcesParsedNumberLengthAndWrapsJacksonFailures() {
+        String maximumLengthNumber = "9".repeat(1_000);
+        String overLimitNumber = "9".repeat(1_001);
+        List<String> otherMaximumLengthNumbers = List.of(
+                "-" + "9".repeat(999),
+                "0." + "1".repeat(998),
+                "1".repeat(996) + "e+10");
+        List<String> otherOverLimitNumbers = List.of(
+                "-" + "9".repeat(1_000),
+                "0." + "1".repeat(999),
+                "1".repeat(997) + "e+10");
+
+        JsonNumber parsed = (JsonNumber) codec.parse(maximumLengthNumber);
+        assertEquals(new BigDecimal(maximumLengthNumber), parsed.value());
+        assertEquals(overLimitNumber, codec.serialize(JsonNumber.of(new BigDecimal(overLimitNumber))));
+        for (String number : otherMaximumLengthNumbers) {
+            assertEquals(new BigDecimal(number), ((JsonNumber) codec.parse(number)).value());
+        }
+
+        JsonParseException tooLong = assertThrows(JsonParseException.class, () -> codec.parse(overLimitNumber));
+        assertInstanceOf(JsonException.class, tooLong);
+        assertNotNull(tooLong.getCause());
+        for (String number : otherOverLimitNumbers) {
+            assertThrows(JsonParseException.class, () -> codec.parse(number));
+        }
+        assertThrows(JsonParseException.class, () -> codec.parse("01"));
+        assertThrows(JsonParseException.class, () -> codec.parse("1e"));
+    }
+
+    @Test
+    void wrapsSerializationConstraintFailuresInJsonException() {
+        JacksonJsonCodec shallowCodec = new JacksonJsonCodec(100, 1);
+
+        JsonSerializationException exception = assertThrows(JsonSerializationException.class,
+                () -> shallowCodec.serialize(JsonObject.of("nested", JsonArray.of())));
+
+        assertInstanceOf(JsonException.class, exception);
+        assertNotNull(exception.getCause());
+        assertFalse(exception.getMessage().contains("nested"));
     }
 
     @Test
