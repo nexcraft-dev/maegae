@@ -5,6 +5,10 @@ import org.junit.jupiter.api.Test;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -172,6 +176,17 @@ class JacksonJsonCodecTest {
     }
 
     @Test
+    void enforcesDefaultNestingDepthBoundary() {
+        JsonValue atLimit = nestedArray(64);
+        String atLimitJson = nestedArrayJson(64);
+
+        assertJsonEquivalent(atLimit, codec.parse(atLimitJson));
+        assertEquals(atLimitJson, codec.serialize(atLimit));
+        assertThrows(JsonParseException.class, () -> codec.parse(nestedArrayJson(65)));
+        assertThrows(JsonSerializationException.class, () -> codec.serialize(nestedArray(65)));
+    }
+
+    @Test
     void enforcesParsedNumberLengthAndWrapsJacksonFailures() {
         String maximumLengthNumber = "9".repeat(1_000);
         String overLimitNumber = "9".repeat(1_001);
@@ -271,18 +286,116 @@ class JacksonJsonCodecTest {
     }
 
     @Test
-    void roundTripsParsedAndConstructedValues() {
-        JsonValue parsed = codec.parse("{\"decimal\":1.2300,\"values\":[null,true,\"snowman ☃\"]}");
+    void roundTripsMixedNestedValuesParsedAndConstructed() {
+        JsonValue parsed = codec.parse("""
+                {
+                  "escaped":"quote \\\" slash \\\\ newline\\n tab\\t snowman ☃ emoji 😀",
+                  "emptyObject":{},
+                  "emptyArray":[],
+                  "flags":[true,false,null],
+                  "numbers":[123456789012345678901234567890.12345678901234567890,-12345678901234567890,1e+10,-4.5E-7,1.2300,0.00000000000000000001],
+                  "nested":[{"values":[null,{"text":"Maegae ☃ 😀"}]}]
+                }
+                """);
         JsonValue constructed = JsonObject.of(
-                "large", JsonValue.of(new BigDecimal("123456789012345678901234567890.123456789")),
-                "nested", JsonArray.of(JsonValue.of(false), JsonNull.instance()));
+                "escaped", JsonValue.of("quote \" slash \\ newline\n tab\t snowman ☃ emoji 😀"),
+                "emptyObject", JsonObject.of(),
+                "emptyArray", JsonArray.of(),
+                "flags", JsonArray.of(JsonValue.of(true), JsonValue.of(false), JsonNull.instance()),
+                "numbers", JsonArray.of(
+                        JsonValue.of(new BigDecimal("123456789012345678901234567890.12345678901234567890")),
+                        JsonValue.of(new BigDecimal("-12345678901234567890")),
+                        JsonValue.of(new BigDecimal("1E+10")),
+                        JsonValue.of(new BigDecimal("-4.5E-7")),
+                        JsonValue.of(new BigDecimal("1.2300")),
+                        JsonValue.of(new BigDecimal("0.00000000000000000001"))),
+                "nested", JsonArray.of(JsonObject.of(
+                        "values", JsonArray.of(JsonNull.instance(), JsonObject.of("text", JsonValue.of("Maegae ☃ 😀"))))));
 
-        assertEquals(parsed, codec.parse(codec.serialize(parsed)));
-        assertEquals(constructed, codec.parse(codec.serialize(constructed)));
+        assertJsonEquivalent(parsed, codec.parse(codec.serialize(parsed)));
+        assertJsonEquivalent(constructed, codec.parse(codec.serialize(constructed)));
+    }
+
+    @Test
+    void safelySharesCodecAcrossVirtualThreadTasks() throws Exception {
+        List<Callable<Integer>> tasks = new ArrayList<>();
+        for (int index = 0; index < 32; index++) {
+            int taskNumber = index;
+            tasks.add(() -> {
+                String json = "{\"id\":" + taskNumber
+                        + ",\"payload\":{\"label\":\"task-" + taskNumber + " ☃ 😀\","
+                        + "\"flags\":[true,false,null,[]]},"
+                        + "\"amount\":12345678901234567890.1234500}";
+                JsonValue expected = JsonObject.of(
+                        "id", JsonValue.of(taskNumber),
+                        "payload", JsonObject.of(
+                                "label", JsonValue.of("task-" + taskNumber + " ☃ 😀"),
+                                "flags", JsonArray.of(JsonValue.of(true), JsonValue.of(false), JsonNull.instance(),
+                                        JsonArray.of())),
+                        "amount", JsonValue.of(new BigDecimal("12345678901234567890.1234500")));
+
+                JsonValue parsed = codec.parse(json);
+                assertJsonEquivalent(expected, parsed);
+                JsonValue restored = codec.parse(codec.serialize(parsed));
+                assertJsonEquivalent(expected, restored);
+                return taskNumber;
+            });
+        }
+
+        var executor = Executors.newVirtualThreadPerTaskExecutor();
+        try {
+            List<Future<Integer>> results = executor.invokeAll(tasks, 10, TimeUnit.SECONDS);
+            for (int index = 0; index < results.size(); index++) {
+                Future<Integer> result = results.get(index);
+                assertFalse(result.isCancelled(), "virtual-thread task exceeded 10 seconds");
+                assertEquals(index, result.get());
+            }
+        } finally {
+            executor.shutdownNow();
+        }
     }
 
     @Test
     void rejectsNullSerializationInput() {
         assertThrows(NullPointerException.class, () -> codec.serialize(null));
+    }
+
+    private static JsonValue nestedArray(int depth) {
+        JsonValue value = JsonValue.of(0);
+        for (int level = 0; level < depth; level++) {
+            value = JsonArray.of(value);
+        }
+        return value;
+    }
+
+    private static String nestedArrayJson(int depth) {
+        return "[".repeat(depth) + "0" + "]".repeat(depth);
+    }
+
+    private static void assertJsonEquivalent(JsonValue expected, JsonValue actual) {
+        switch (expected) {
+            case JsonObject expectedObject -> {
+                JsonObject actualObject = assertInstanceOf(JsonObject.class, actual);
+                assertEquals(new ArrayList<>(expectedObject.values().keySet()),
+                        new ArrayList<>(actualObject.values().keySet()));
+                expectedObject.values().forEach((key, value) ->
+                        assertJsonEquivalent(value, actualObject.values().get(key)));
+            }
+            case JsonArray expectedArray -> {
+                JsonArray actualArray = assertInstanceOf(JsonArray.class, actual);
+                assertEquals(expectedArray.values().size(), actualArray.values().size());
+                for (int index = 0; index < expectedArray.values().size(); index++) {
+                    assertJsonEquivalent(expectedArray.values().get(index), actualArray.values().get(index));
+                }
+            }
+            case JsonString expectedString ->
+                    assertEquals(expectedString.value(), assertInstanceOf(JsonString.class, actual).value());
+            case JsonNumber expectedNumber ->
+                    assertEquals(0, expectedNumber.value()
+                            .compareTo(assertInstanceOf(JsonNumber.class, actual).value()));
+            case JsonBoolean expectedBoolean ->
+                    assertEquals(expectedBoolean.value(), assertInstanceOf(JsonBoolean.class, actual).value());
+            case JsonNull ignored -> assertSame(JsonNull.instance(), assertInstanceOf(JsonNull.class, actual));
+        }
     }
 }
