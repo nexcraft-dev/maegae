@@ -89,4 +89,77 @@ class JacksonJsonCodecTest {
     void rejectsNullInput() {
         assertThrows(NullPointerException.class, () -> codec.parse(null));
     }
+
+    @Test
+    void serializesPrimitiveValuesAndEmptyContainers() {
+        assertEquals("\"Maegae\"", codec.serialize(JsonValue.of("Maegae")));
+        assertEquals("123", codec.serialize(JsonValue.of(123)));
+        assertEquals("true", codec.serialize(JsonValue.of(true)));
+        assertEquals("false", codec.serialize(JsonValue.of(false)));
+        assertEquals("null", codec.serialize(JsonNull.instance()));
+        assertEquals("{}", codec.serialize(JsonObject.of()));
+        assertEquals("[]", codec.serialize(JsonArray.of()));
+    }
+
+    @Test
+    void serializesNestedValuesPreservingObjectAndArrayOrder() {
+        JsonValue value = JsonObject.of(
+                "jsonrpc", JsonValue.of("2.0"),
+                "method", JsonValue.of("tools/list"),
+                "params", JsonArray.of(
+                        JsonValue.of(1),
+                        JsonObject.of("enabled", JsonValue.of(true), "result", JsonNull.instance())));
+
+        String expected = "{\"jsonrpc\":\"2.0\",\"method\":\"tools/list\",\"params\":[1,{\"enabled\":true,\"result\":null}]}";
+
+        assertEquals(expected, codec.serialize(value));
+    }
+
+    @Test
+    void escapesJsonStringsAndPreservesUnicode() {
+        String original = "quote \" slash \\ newline\n tab\t control\u0001 snowman ☃ emoji 😀";
+
+        JsonString value = new JsonString(original);
+        JsonObject object = JsonObject.of(original, value);
+
+        assertEquals(value, codec.parse(codec.serialize(value)));
+        assertEquals(object, codec.parse(codec.serialize(object)));
+    }
+
+    @Test
+    void serializesBigDecimalsWithoutLosingPrecisionOrScale() {
+        List<BigDecimal> numbers = List.of(
+                new BigDecimal("123456789012345678901234567890"),
+                new BigDecimal("-123"),
+                new BigDecimal("123.456789012345678901234567890"),
+                new BigDecimal("1E+10"),
+                new BigDecimal("0.00000000000000000001"),
+                new BigDecimal("1.2300"));
+        JsonArray original = new JsonArray(numbers.stream().<JsonValue>map(JsonNumber::of).toList());
+
+        JsonArray restored = (JsonArray) codec.parse(codec.serialize(original));
+
+        for (int index = 0; index < numbers.size(); index++) {
+            BigDecimal expected = numbers.get(index);
+            BigDecimal actual = ((JsonNumber) restored.values().get(index)).value();
+            assertEquals(0, expected.compareTo(actual));
+        }
+        assertEquals(numbers.get(5).scale(), ((JsonNumber) restored.values().get(5)).value().scale());
+    }
+
+    @Test
+    void roundTripsParsedAndConstructedValues() {
+        JsonValue parsed = codec.parse("{\"decimal\":1.2300,\"values\":[null,true,\"snowman ☃\"]}");
+        JsonValue constructed = JsonObject.of(
+                "large", JsonValue.of(new BigDecimal("123456789012345678901234567890.123456789")),
+                "nested", JsonArray.of(JsonValue.of(false), JsonNull.instance()));
+
+        assertEquals(parsed, codec.parse(codec.serialize(parsed)));
+        assertEquals(constructed, codec.parse(codec.serialize(constructed)));
+    }
+
+    @Test
+    void rejectsNullSerializationInput() {
+        assertThrows(NullPointerException.class, () -> codec.serialize(null));
+    }
 }

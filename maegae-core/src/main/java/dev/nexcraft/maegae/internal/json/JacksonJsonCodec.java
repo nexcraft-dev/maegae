@@ -1,19 +1,20 @@
 package dev.nexcraft.maegae.internal.json;
 
 import tools.jackson.core.JacksonException;
+import tools.jackson.core.JsonGenerator;
 import tools.jackson.core.JsonParser;
 import tools.jackson.core.JsonToken;
 import tools.jackson.core.ObjectReadContext;
+import tools.jackson.core.ObjectWriteContext;
 import tools.jackson.core.json.JsonFactory;
 
+import java.io.StringWriter;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.Objects;
 
 /**
- * Parses JSON text into the internal immutable JSON value model.
- *
- * <p>Serialization is reserved for a later implementation milestone.</p>
+ * Converts between JSON text and the internal immutable JSON value model.
  */
 public final class JacksonJsonCodec implements JsonCodec {
 
@@ -39,18 +40,41 @@ public final class JacksonJsonCodec implements JsonCodec {
         }
     }
 
-    /**
-     * Serialization is not implemented in this milestone.
-     *
-     * @param value the value to serialize
-     * @return never returns
-     * @throws NullPointerException if {@code value} is {@code null}
-     * @throws UnsupportedOperationException always, because serialization is not implemented
-     */
     @Override
     public String serialize(JsonValue value) {
         Objects.requireNonNull(value, "value");
-        throw new UnsupportedOperationException("JSON serialization is not implemented");
+
+        var output = new StringWriter();
+        try (JsonGenerator generator = JSON_FACTORY.createGenerator(ObjectWriteContext.empty(), output)) {
+            writeValue(generator, value);
+        } catch (JacksonException exception) {
+            throw new JsonSerializationException("Unable to serialize JSON value", exception);
+        }
+        return output.toString();
+    }
+
+    private static void writeValue(JsonGenerator generator, JsonValue value) throws JacksonException {
+        switch (value) {
+            case JsonObject object -> {
+                generator.writeStartObject();
+                for (var entry : object.values().entrySet()) {
+                    generator.writeName(entry.getKey());
+                    writeValue(generator, entry.getValue());
+                }
+                generator.writeEndObject();
+            }
+            case JsonArray array -> {
+                generator.writeStartArray();
+                for (JsonValue element : array.values()) {
+                    writeValue(generator, element);
+                }
+                generator.writeEndArray();
+            }
+            case JsonString string -> generator.writeString(string.value());
+            case JsonNumber number -> generator.writeNumber(number.value());
+            case JsonBoolean bool -> generator.writeBoolean(bool.value());
+            case JsonNull ignored -> generator.writeNull();
+        }
     }
 
     private static JsonValue parseValue(JsonParser parser, JsonToken token) {
