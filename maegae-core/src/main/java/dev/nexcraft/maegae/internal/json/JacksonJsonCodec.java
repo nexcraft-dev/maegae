@@ -7,6 +7,7 @@ import tools.jackson.core.JsonToken;
 import tools.jackson.core.ObjectReadContext;
 import tools.jackson.core.ObjectWriteContext;
 import tools.jackson.core.StreamReadConstraints;
+import tools.jackson.core.StreamReadFeature;
 import tools.jackson.core.StreamWriteConstraints;
 import tools.jackson.core.json.JsonFactory;
 
@@ -23,6 +24,7 @@ import java.util.Objects;
 
 /**
  * Converts between JSON text and the internal immutable JSON value model.
+ * Duplicate object property names are rejected at every nesting depth.
  */
 public final class JacksonJsonCodec implements JsonCodec {
 
@@ -56,6 +58,7 @@ public final class JacksonJsonCodec implements JsonCodec {
 
         this.maxInputBytes = maxInputBytes;
         this.jsonFactory = JsonFactory.builder()
+                .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
                 .streamReadConstraints(StreamReadConstraints.builder()
                         .maxNestingDepth(maxNestingDepth)
                         .maxNumberLength(MAX_NUMBER_LENGTH)

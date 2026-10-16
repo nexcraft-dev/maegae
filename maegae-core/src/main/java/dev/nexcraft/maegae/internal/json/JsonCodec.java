@@ -8,10 +8,13 @@ public interface JsonCodec {
 
     /**
      * Parses JSON text into a value.
+     * Implementations must reject duplicate object property names at every nesting depth.
      *
      * @param json JSON text
      * @return the parsed value
      * @throws NullPointerException if {@code json} is {@code null}
+     * @throws JsonParseException if the input is malformed, contains duplicate property names,
+     *                            or exceeds the implementation's resource limits
      */
     JsonValue parse(String json);
 
