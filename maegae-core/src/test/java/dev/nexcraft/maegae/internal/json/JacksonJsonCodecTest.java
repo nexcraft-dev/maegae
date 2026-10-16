@@ -59,6 +59,7 @@ class JacksonJsonCodecTest {
     void rejectsDuplicatePropertyNamesWithinEachObject(String json) {
         JsonParseException exception = assertThrows(JsonParseException.class, () -> codec.parse(json));
 
+        assertFalse(exception.isResourceLimit());
         assertNotNull(exception.getCause());
         assertFalse(exception.getMessage().contains(json));
     }
@@ -109,6 +110,7 @@ class JacksonJsonCodecTest {
         JsonParseException exception = assertThrows(JsonParseException.class, () -> codec.parse(input));
 
         assertTrue(exception.getMessage().contains("Malformed JSON input"));
+        assertFalse(exception.isResourceLimit());
         assertFalse(exception.getMessage().contains("sensitive-value"));
         assertNotNull(exception.getCause());
     }
@@ -123,12 +125,12 @@ class JacksonJsonCodecTest {
         JacksonJsonCodec asciiLimited = new JacksonJsonCodec(4, 64);
         assertEquals(JsonValue.of(1), asciiLimited.parse("1"));
         assertEquals(JsonNull.instance(), asciiLimited.parse("null"));
-        assertThrows(JsonParseException.class, () -> asciiLimited.parse("true "));
+        assertTrue(assertThrows(JsonParseException.class, () -> asciiLimited.parse("true ")).isResourceLimit());
 
         JacksonJsonCodec multibyteLimited = new JacksonJsonCodec(5, 64);
         assertEquals(JsonValue.of("a"), multibyteLimited.parse("\"a\""));
         assertEquals(JsonValue.of("☃"), multibyteLimited.parse("\"☃\""));
-        assertThrows(JsonParseException.class, () -> multibyteLimited.parse("\"☃ \""));
+        assertTrue(assertThrows(JsonParseException.class, () -> multibyteLimited.parse("\"☃ \"")).isResourceLimit());
     }
 
     @Test
@@ -138,7 +140,7 @@ class JacksonJsonCodecTest {
 
         JsonString parsed = (JsonString) codec.parse(atLimit);
         assertEquals(1_048_574, parsed.value().length());
-        assertThrows(JsonParseException.class, () -> codec.parse(aboveLimit));
+        assertTrue(assertThrows(JsonParseException.class, () -> codec.parse(aboveLimit)).isResourceLimit());
     }
 
     @Test
@@ -152,6 +154,8 @@ class JacksonJsonCodecTest {
                 () -> codec.parse(unpairedLowSurrogate));
 
         assertTrue(highSurrogate.getMessage().contains("malformed UTF-16"));
+        assertFalse(highSurrogate.isResourceLimit());
+        assertFalse(lowSurrogate.isResourceLimit());
         assertInstanceOf(java.nio.charset.CharacterCodingException.class, highSurrogate.getCause());
         assertInstanceOf(java.nio.charset.CharacterCodingException.class, lowSurrogate.getCause());
     }
@@ -170,8 +174,8 @@ class JacksonJsonCodecTest {
         assertEquals(JsonValue.of(true), depthZero.parse("true"));
         assertEquals("1", depthZero.serialize(JsonValue.of(1)));
 
-        assertThrows(JsonParseException.class, () -> depthZero.parse("{}"));
-        assertThrows(JsonParseException.class, () -> depthZero.parse("[]"));
+        assertTrue(assertThrows(JsonParseException.class, () -> depthZero.parse("{}")).isResourceLimit());
+        assertTrue(assertThrows(JsonParseException.class, () -> depthZero.parse("[]")).isResourceLimit());
         assertThrows(JsonSerializationException.class, () -> depthZero.serialize(JsonObject.of()));
         assertThrows(JsonSerializationException.class, () -> depthZero.serialize(JsonArray.of()));
     }
@@ -205,7 +209,9 @@ class JacksonJsonCodecTest {
 
         assertJsonEquivalent(atLimit, codec.parse(atLimitJson));
         assertEquals(atLimitJson, codec.serialize(atLimit));
-        assertThrows(JsonParseException.class, () -> codec.parse(nestedArrayJson(65)));
+        JsonParseException tooDeep = assertThrows(JsonParseException.class, () -> codec.parse(nestedArrayJson(65)));
+        assertTrue(tooDeep.isResourceLimit());
+        assertNotNull(tooDeep.getCause());
         assertThrows(JsonSerializationException.class, () -> codec.serialize(nestedArray(65)));
     }
 
@@ -231,12 +237,13 @@ class JacksonJsonCodecTest {
 
         JsonParseException tooLong = assertThrows(JsonParseException.class, () -> codec.parse(overLimitNumber));
         assertInstanceOf(JsonException.class, tooLong);
+        assertTrue(tooLong.isResourceLimit());
         assertNotNull(tooLong.getCause());
         for (String number : otherOverLimitNumbers) {
-            assertThrows(JsonParseException.class, () -> codec.parse(number));
+            assertTrue(assertThrows(JsonParseException.class, () -> codec.parse(number)).isResourceLimit());
         }
-        assertThrows(JsonParseException.class, () -> codec.parse("01"));
-        assertThrows(JsonParseException.class, () -> codec.parse("1e"));
+        assertFalse(assertThrows(JsonParseException.class, () -> codec.parse("01")).isResourceLimit());
+        assertFalse(assertThrows(JsonParseException.class, () -> codec.parse("1e")).isResourceLimit());
     }
 
     @Test
