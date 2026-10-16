@@ -1,6 +1,8 @@
 package dev.nexcraft.maegae.internal.json;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -40,11 +42,32 @@ class JacksonJsonCodecTest {
     }
 
     @Test
-    void preservesObjectOrderAndUsesLastValueForDuplicateNames() {
-        JsonObject object = (JsonObject) codec.parse("{\"first\":1,\"second\":2,\"first\":3}");
+    void preservesObjectOrderWhenNamesAreUnique() {
+        JsonObject object = (JsonObject) codec.parse("{\"first\":1,\"second\":2,\"third\":3}");
 
-        assertEquals(List.of("first", "second"), new ArrayList<>(object.values().keySet()));
-        assertEquals(JsonValue.of(3), object.values().get("first"));
+        assertEquals(List.of("first", "second", "third"), new ArrayList<>(object.values().keySet()));
+        assertEquals(JsonValue.of(3), object.values().get("third"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "{\"name\":1,\"name\":2}",
+            "{\"outer\":{\"name\":1,\"name\":2}}",
+            "[{\"name\":1,\"name\":2}]",
+            "{\"name\":1,\"n\\u0061me\":2}"
+    })
+    void rejectsDuplicatePropertyNamesWithinEachObject(String json) {
+        JsonParseException exception = assertThrows(JsonParseException.class, () -> codec.parse(json));
+
+        assertNotNull(exception.getCause());
+        assertFalse(exception.getMessage().contains(json));
+    }
+
+    @Test
+    void allowsTheSamePropertyNameInSeparateObjects() {
+        assertEquals(JsonArray.of(JsonObject.of("name", JsonValue.of(1)),
+                        JsonObject.of("name", JsonValue.of(2))),
+                codec.parse("[{\"name\":1},{\"name\":2}]"));
     }
 
     @Test
