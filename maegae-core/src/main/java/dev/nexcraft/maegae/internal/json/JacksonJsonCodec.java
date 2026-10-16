@@ -9,6 +9,7 @@ import tools.jackson.core.ObjectWriteContext;
 import tools.jackson.core.StreamReadConstraints;
 import tools.jackson.core.StreamReadFeature;
 import tools.jackson.core.StreamWriteConstraints;
+import tools.jackson.core.exc.StreamConstraintsException;
 import tools.jackson.core.json.JsonFactory;
 
 import java.io.StringWriter;
@@ -85,6 +86,8 @@ public final class JacksonJsonCodec implements JsonCodec {
                 throw new JsonParseException("JSON input contains trailing content");
             }
             return value;
+        } catch (StreamConstraintsException exception) {
+            throw JsonParseException.resourceLimit("JSON input exceeds a resource limit", exception);
         } catch (JacksonException exception) {
             throw new JsonParseException("Malformed JSON input", exception);
         }
@@ -116,7 +119,7 @@ public final class JacksonJsonCodec implements JsonCodec {
                 CoderResult result = encoder.encode(input, output, true);
                 byteCount += output.position();
                 if (byteCount > maxInputBytes) {
-                    throw new JsonParseException("JSON input exceeds the maximum UTF-8 size");
+                    throw JsonParseException.resourceLimit("JSON input exceeds the maximum UTF-8 size");
                 }
                 output.clear();
                 if (result.isError()) {
@@ -131,7 +134,7 @@ public final class JacksonJsonCodec implements JsonCodec {
                 CoderResult result = encoder.flush(output);
                 byteCount += output.position();
                 if (byteCount > maxInputBytes) {
-                    throw new JsonParseException("JSON input exceeds the maximum UTF-8 size");
+                    throw JsonParseException.resourceLimit("JSON input exceeds the maximum UTF-8 size");
                 }
                 output.clear();
                 if (result.isError()) {
@@ -185,7 +188,7 @@ public final class JacksonJsonCodec implements JsonCodec {
 
     private static JsonNumber parseNumber(JsonParser parser) {
         if (parser.getStringLength() > MAX_NUMBER_LENGTH) {
-            throw new JsonParseException("JSON number exceeds the maximum length");
+            throw JsonParseException.resourceLimit("JSON number exceeds the maximum length");
         }
         return JsonValue.of(parser.getDecimalValue());
     }

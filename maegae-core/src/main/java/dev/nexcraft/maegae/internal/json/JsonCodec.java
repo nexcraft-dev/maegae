@@ -9,6 +9,7 @@ public interface JsonCodec {
     /**
      * Parses JSON text into a value.
      * Implementations must reject duplicate object property names at every nesting depth.
+     * Resource-limit failures must report {@code true} from {@link JsonParseException#isResourceLimit()}.
      *
      * @param json JSON text
      * @return the parsed value

@@ -23,6 +23,7 @@ final class JsonRpcMessageParser {
     /**
      * @throws NullPointerException if {@code json} is {@code null}
      * @throws JsonParseException if JSON parsing fails, including duplicate properties or resource limits
+     *                            identified by {@link JsonParseException#isResourceLimit()}
      * @throws JsonRpcValidationException if the document is not a valid JSON-RPC message
      */
     JsonRpcMessage parse(String json) {
