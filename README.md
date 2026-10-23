@@ -56,16 +56,16 @@ public class CalculatorTools {
 
     @Tool(description = "Add two numbers")
     public int add(
-            @Arg("a") int a,
-            @Arg("b") int b) {
+            @Arg(name = "a") int a,
+            @Arg(name = "b") int b) {
 
         return a + b;
     }
 
     @Tool(description = "Multiply two numbers")
     public int multiply(
-            @Arg("a") int a,
-            @Arg("b") int b) {
+            @Arg(name = "a") int a,
+            @Arg(name = "b") int b) {
 
         return a * b;
     }
