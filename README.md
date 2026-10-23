@@ -2,15 +2,38 @@
 
 **A lightweight, high-performance MCP server framework for Java.**
 
-Maegae makes it simple to build Model Context Protocol (MCP) servers using Java 25, Netty, and Virtual Threads.
+Maegae is an MCP server framework in early development, built around Java 25, Netty, and Virtual Threads.
 
-Define your tools using Java annotations. Maegae handles tool discovery, JSON Schema generation, request validation, and execution.
+The planned v1 API will use Java annotations for tool definitions, with generated tool metadata, JSON Schema, and invocation adapters.
 
 No Spring. No dependency injection container. No unnecessary complexity.
 
 > **Project Status:** Early Development
 
-## Features
+## Implemented Foundation
+
+- Immutable internal JSON values, strict parsing, and serialization using Jackson 3 Core.
+- JSON-RPC 2.0 message models, parsing, validation, serialization, and standard error response factories.
+- MCP initialization and capability models targeting [MCP 2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle).
+- Architecture checks for Core independence, internal type encapsulation, Processor boundaries, and Netty transport boundaries.
+
+The JSON-RPC and MCP models are package-private Core components. Initialization handling, method dispatch, version negotiation, and JSON-RPC-to-MCP mapping remain planned.
+
+JSON-RPC supports individual requests, notifications, and success/error responses. Batch messages are not supported. Initialization models preserve optional title, description, instructions, and `_meta`. Implementation icons and `websiteUrl` are not modeled.
+
+The server capability model provides a Tools-only declaration with `listChanged=false`. This declaration does not enable tool execution or runtime capability advertisement. Resources and Prompts are absent from this default.
+
+The JSON codec enforces these parsing limits:
+
+| Limit | Default |
+|-------|---------|
+| UTF-8 input size | 1 MiB (1,048,576 bytes) |
+| Nesting depth | 64 objects or arrays |
+| Numeric token length | 1,000 characters |
+
+Duplicate object properties and malformed JSON are rejected. Input and nesting limits can be set on the internal codec. No public protocol configuration API is available.
+
+## Planned v1 Features
 
 - **Java 25** — Built for modern Java.
 - **Virtual Threads** — Lightweight concurrent tool execution.
@@ -22,7 +45,7 @@ No Spring. No dependency injection container. No unnecessary complexity.
 - **Minimal Dependencies** — No application framework required.
 - **Configurable Execution** — Tool timeouts and optional concurrency limits.
 
-## Quick Start
+## Planned Quick Start
 
 > The following API represents the planned Maegae v1 developer experience. It is not yet available as a published release.
 
@@ -49,7 +72,7 @@ public class CalculatorTools {
 }
 ```
 
-Maegae uses annotation processing to generate tool definitions, input schemas, and invocation adapters during compilation.
+Maegae will use annotation processing to generate tool definitions, input schemas, and invocation adapters during compilation.
 
 ### 2. Start the Server
 
@@ -64,7 +87,7 @@ public class Application {
 }
 ```
 
-The server uses the following defaults:
+The planned server defaults are:
 
 | Setting | Default |
 |---------|---------|
@@ -77,7 +100,7 @@ The server uses the following defaults:
 | Tool Concurrency | Unlimited |
 | Execution Model | Virtual Threads |
 
-Your MCP endpoint:
+The planned MCP endpoint:
 
 `http://127.0.0.1:8765/mcp`
 
@@ -91,17 +114,17 @@ Maegae.server()
     .listen(9000);
 ```
 
-Configuration options:
+Planned configuration options:
 
 - `toolTimeout()` — Maximum execution time for a tool call.
 - `maxConcurrentToolCalls()` — Optional limit on concurrent tool executions.
 - `listen(port)` — Start the HTTP server on a custom port.
 
-By default, Maegae does not impose a tool concurrency limit.
+The planned default has no tool concurrency limit.
 
 ## MCP Feature Support
 
-The following matrix tracks the planned implementation and support status of MCP capabilities.
+The following matrix distinguishes implemented Core foundations from planned runtime capabilities.
 
 **Status Legend**
 
@@ -110,11 +133,22 @@ The following matrix tracks the planned implementation and support status of MCP
 - 📋 Planned — Planned for a future release
 - ⬜ Not Implemented — Not currently implemented or scheduled
 
+### Protocol Foundation
+
+| Feature | Status |
+|---------|--------|
+| Internal JSON values and codec | ✅ Supported |
+| JSON-RPC 2.0 message parsing and serialization | ✅ Supported |
+| Standard JSON-RPC error response factories | ✅ Supported |
+| MCP initialization and capability models (2025-11-25) | ✅ Supported |
+
+These entries describe internal model and codec support. Runtime support is listed separately below.
+
 ### Lifecycle
 
 | Feature | Status |
 |---------|--------|
-| Initialization | 📋 Planned |
+| Initialization handling | 📋 Planned |
 | Initialized Notification | 📋 Planned |
 | Ping | 📋 Planned |
 | Protocol Version Negotiation | 📋 Planned |
@@ -166,7 +200,6 @@ The following matrix tracks the planned implementation and support status of MCP
 |---------|--------|
 | Streamable HTTP | 📋 Planned |
 | Stateless Execution | 📋 Planned |
-| JSON-RPC 2.0 | 📋 Planned |
 | Origin Validation | 📋 Planned |
 | STDIO | ⬜ Not Implemented |
 | Stateful Sessions | ⬜ Not Implemented |
@@ -182,7 +215,7 @@ The following matrix tracks the planned implementation and support status of MCP
 
 ## Architecture
 
-Maegae separates MCP protocol processing from its underlying HTTP transport implementation.
+The planned v1 architecture separates MCP protocol processing from its underlying HTTP transport implementation.
 
 ```text
                     Java Application
@@ -246,6 +279,15 @@ This allows the underlying HTTP implementation to evolve without affecting the c
 
 Maegae does not require Spring, Micronaut, or another application framework.
 
+## Development
+
+Use JDK 25 and the Gradle wrapper to verify the protocol components and all module boundaries:
+
+```bash
+./gradlew :maegae-core:test
+./gradlew clean build
+```
+
 ## Design Principles
 
 ### 1. Lightweight by Default
@@ -274,9 +316,11 @@ Provide sensible defaults while allowing developers to configure execution timeo
 
 ### v1 — Tool-Focused MCP Server
 
-- [ ] Project foundation
-- [ ] MCP protocol core
-- [ ] JSON-RPC processing
+- [x] Project foundation and architecture checks
+- [x] JSON Foundation
+- [x] JSON-RPC message parsing, serialization, and standard errors
+- [x] MCP initialization and capability models (2025-11-25)
+- [ ] MCP method dispatch and lifecycle integration
 - [ ] Tool annotations
 - [ ] Annotation processor
 - [ ] JSON Schema generation
@@ -288,7 +332,7 @@ Provide sensible defaults while allowing developers to configure execution timeo
 - [ ] Stateless Streamable HTTP transport
 - [ ] Netty integration
 - [ ] Origin validation
-- [ ] MCP compatibility tests
+- [ ] MCP runtime compatibility tests
 - [ ] Example application
 - [ ] Maven Central publishing
 
