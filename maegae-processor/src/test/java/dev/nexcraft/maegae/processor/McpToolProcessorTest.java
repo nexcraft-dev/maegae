@@ -40,7 +40,7 @@ class McpToolProcessorTest {
     }
 
     @Test
-    void javacDiscoversAndInvokesThePackagedProviderWithoutGeneratingToolFiles(@TempDir final Path output)
+    void javacDiscoversAndInvokesThePackagedProviderAndCompilesMetadata(@TempDir final Path output)
             throws Exception {
         assertPackagedService();
         final String trace = compile("""
@@ -52,7 +52,7 @@ class McpToolProcessorTest {
                     @Tool
                     public int add(int first, int second) { return first + second; }
                 }
-                """, output);
+                """, output, true);
 
         final String invocation = trace.lines().filter(line -> line.startsWith("Processor " + PROVIDER + " "))
                 .findFirst().orElseThrow(() -> new AssertionError("Missing processor invocation trace: " + trace));
@@ -65,7 +65,7 @@ class McpToolProcessorTest {
     @ValueSource(strings = {"@Deprecated public class ExampleTools {}", "public class ExampleTools {}"})
     void compilesUnrelatedAndUnannotatedSourcesWithoutToolProcessing(final String source,
                                                                     @TempDir final Path output) throws Exception {
-        final String trace = compile(source, output);
+        final String trace = compile(source, output, false);
 
         assertFalse(trace.contains("Processor " + PROVIDER + " "), trace);
     }
@@ -84,7 +84,7 @@ class McpToolProcessorTest {
     }
 
     /** Compiles isolated source with service lookup enabled and asserts the complete output boundary. */
-    private static String compile(final String sourceText, final Path output) throws Exception {
+    private static String compile(final String sourceText, final Path output, final boolean hasTool) throws Exception {
         final Path source = output.resolve("ExampleTools.java");
         final Path classes = Files.createDirectory(output.resolve("classes"));
         final Path generated = Files.createDirectory(output.resolve("generated"));
@@ -105,9 +105,11 @@ class McpToolProcessorTest {
         }
         assertTrue(diagnostics.getDiagnostics().isEmpty(), diagnostics.getDiagnostics().toString());
         try (final var classFiles = Files.walk(classes); final var generatedFiles = Files.walk(generated)) {
-            assertEquals(List.of(Path.of("ExampleTools.class")), classFiles.filter(Files::isRegularFile)
-                    .map(classes::relativize).sorted().toList());
-            assertTrue(generatedFiles.noneMatch(Files::isRegularFile));
+            final var compiled = classFiles.filter(Files::isRegularFile).map(classes::relativize).sorted().toList();
+            final var sources = generatedFiles.filter(Files::isRegularFile).toList();
+            assertTrue(compiled.contains(Path.of("ExampleTools.class")), compiled.toString());
+            assertEquals(hasTool ? 2 : 1, compiled.size(), compiled.toString());
+            assertEquals(hasTool ? 1 : 0, sources.size(), sources.toString());
         }
         return trace.toString();
     }

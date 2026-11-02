@@ -14,11 +14,11 @@ import javax.lang.model.element.NestingKind;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.element.VariableElement;
 import javax.lang.model.type.TypeKind;
-import javax.lang.model.type.TypeMirror;
 import javax.tools.Diagnostic;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -31,7 +31,6 @@ import java.util.Set;
 public final class McpToolProcessor extends AbstractProcessor {
     private final Set<ExecutableElement> processed = new HashSet<>();
     private final Map<TypeElement, Set<String>> providerNames = new HashMap<>();
-    private final List<ToolDeclaration> declarations = new ArrayList<>();
 
     @Override
     public Set<String> getSupportedAnnotationTypes() {
@@ -46,20 +45,36 @@ public final class McpToolProcessor extends AbstractProcessor {
     @Override
     public boolean process(final Set<? extends TypeElement> annotations, final RoundEnvironment roundEnv) {
         if (!roundEnv.processingOver()) {
+            final Map<TypeElement, List<ToolDeclaration>> providers = new LinkedHashMap<>();
+            final Set<TypeElement> invalidProviders = new HashSet<>();
             for (final Element element : roundEnv.getElementsAnnotatedWith(Tool.class)) {
                 if (element instanceof ExecutableElement method && element.getKind() == ElementKind.METHOD) {
                     if (processed.add(method)) {
-                        discover(method);
+                        final TypeElement provider = (TypeElement) method.getEnclosingElement();
+                        final List<ToolDeclaration> declarations = providers.computeIfAbsent(provider,
+                                ignored -> new ArrayList<>());
+                        final ToolDeclaration declaration = discover(method);
+                        if (declaration == null) {
+                            invalidProviders.add(provider);
+                        } else {
+                            declarations.add(declaration);
+                        }
                     }
                 } else {
                     error(element, "@Tool can only annotate a method.");
                 }
             }
+            final var generator = new ToolMetadataGenerator(processingEnv);
+            providers.forEach((provider, declarations) -> {
+                if (!invalidProviders.contains(provider)) {
+                    generator.generate(provider, declarations);
+                }
+            });
         }
         return false;
     }
 
-    private void discover(final ExecutableElement method) {
+    private ToolDeclaration discover(final ExecutableElement method) {
         final TypeElement provider = (TypeElement) method.getEnclosingElement();
         final String name = effectiveName(method.getAnnotation(Tool.class).name(), method.getSimpleName().toString());
         boolean valid = validateMethod(method, provider);
@@ -70,9 +85,7 @@ public final class McpToolProcessor extends AbstractProcessor {
         }
         final List<ArgumentDeclaration> arguments = new ArrayList<>();
         valid &= discoverArguments(method, arguments);
-        if (valid) {
-            declarations.add(new ToolDeclaration(provider, method, name, List.copyOf(arguments)));
-        }
+        return valid ? new ToolDeclaration(provider, method, name, List.copyOf(arguments)) : null;
     }
 
     private boolean validateMethod(final ExecutableElement method, final TypeElement provider) {
@@ -164,11 +177,4 @@ public final class McpToolProcessor extends AbstractProcessor {
         processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, message, element);
     }
 
-    /** Compiler-model information for a validated Tool method. */
-    private record ToolDeclaration(TypeElement provider, ExecutableElement method, String name,
-                                   List<ArgumentDeclaration> arguments) { }
-
-    /** Compiler-model information for one Tool argument. */
-    private record ArgumentDeclaration(VariableElement parameter, TypeMirror type, String name,
-                                       String description, boolean required) { }
 }
