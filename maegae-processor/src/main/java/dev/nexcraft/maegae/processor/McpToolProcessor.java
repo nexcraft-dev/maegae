@@ -74,7 +74,7 @@ public final class McpToolProcessor extends AbstractProcessor {
                     error(element, "@Tool can only annotate a method.");
                 }
             }
-            final var generator = new ToolMetadataGenerator(processingEnv, generatedNames);
+            final var generator = new ToolGenerator(processingEnv, generatedNames);
             providers.forEach((provider, declarations) -> {
                 if (!invalidProviders.contains(provider)) {
                     generator.generate(provider, declarations);
