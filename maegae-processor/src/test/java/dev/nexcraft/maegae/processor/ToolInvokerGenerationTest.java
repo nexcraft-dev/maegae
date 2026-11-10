@@ -29,7 +29,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import java.util.function.Supplier;
 import java.util.stream.Stream;
 
@@ -86,12 +85,19 @@ class ToolInvokerGenerationTest {
                 }
                 """, "ExampleTools");
         assertEquals(ToolOutput.text("a1"), call(invokers, "echo", "{\"text\":\"a\",\"boxed\":1}"));
-        for (final String json : List.of("{\"boxed\":1}", "{\"text\":null,\"boxed\":1}", "{\"text\":\"a\"}",
-                "{\"text\":\"a\",\"boxed\":null}")) {
-            final var exception = assertThrows(ToolArgumentException.class, () -> call(invokers, "echo", json));
-            assertTrue(Set.of("text", "boxed").contains(exception.argumentName()), json);
+        final Map<String, String> expectedNames = new LinkedHashMap<>();
+        expectedNames.put("{\"boxed\":1}", "text");
+        expectedNames.put("{\"text\":null,\"boxed\":1}", "text");
+        expectedNames.put("{\"text\":\"a\"}", "boxed");
+        expectedNames.put("{\"text\":\"a\",\"boxed\":null}", "boxed");
+        for (final var entry : expectedNames.entrySet()) {
+            final var exception = assertThrows(ToolArgumentException.class,
+                    () -> call(invokers, "echo", entry.getKey()), entry.getKey());
+            assertEquals(entry.getValue(), exception.argumentName(), entry.getKey());
         }
-        assertThrows(ToolArgumentException.class, () -> call(invokers, "echo", "{\"text\":1,\"boxed\":1}"));
+        final var wrongType = assertThrows(ToolArgumentException.class,
+                () -> call(invokers, "echo", "{\"text\":1,\"boxed\":1}"));
+        assertEquals("text", wrongType.argumentName());
     }
 
     @Test

@@ -18,7 +18,7 @@ import java.util.function.Function;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTimeout;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class JsonToolArgumentsTest {
@@ -150,12 +150,27 @@ class JsonToolArgumentsTest {
                 number(new BigDecimal("1" + "0".repeat(JsonToolArguments.MAX_INTEGER_DIGITS))));
     }
 
+    @Test
+    void rejectsIntegralValuesWithMoreSignificantDigitsThanTheLimit() {
+        // One integer digit, but 1,501 significant digits. The policy rejects such values for integer types.
+        final var arguments = number(new BigDecimal("1." + "0".repeat(1500)));
+        assertTrue(new BigDecimal("1." + "0".repeat(1500)).precision() > JsonToolArguments.MAX_INTEGER_DIGITS);
+        rejects(a -> a.getByte("n"), arguments);
+        rejects(a -> a.getShort("n"), arguments);
+        rejects(a -> a.getInt("n"), arguments);
+        rejects(a -> a.getLong("n"), arguments);
+        rejects(a -> a.getBigInteger("n"), arguments);
+        // The exact value remains available as BigDecimal.
+        assertEquals(new BigDecimal("1." + "0".repeat(1500)), arguments.getBigDecimal("n"));
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {"1e1000000000", "-1e1000000000", "1e-1000000000", "1e2147483647", "1e-2147483647",
-            "9e999999999", "1.5e-999999999"})
+            "9e999999999", "1.5e-999999999", "1e100000000"})
     void boundsWorkForExtremeExponents(final String literal) {
         final var arguments = number(literal);
-        assertTimeout(Duration.ofSeconds(2), () -> {
+        // Without the digit-limit check, 1e100000000 needs about 24 seconds in BigDecimal.toBigIntegerExact.
+        assertTimeoutPreemptively(Duration.ofSeconds(5), () -> {
             rejects(a -> a.getByte("n"), arguments);
             rejects(a -> a.getShort("n"), arguments);
             rejects(a -> a.getInt("n"), arguments);
@@ -168,8 +183,8 @@ class JsonToolArgumentsTest {
                 rejects(a -> a.getDouble("n"), arguments);
                 rejects(a -> a.getFloat("n"), arguments);
             }
+            assertEquals(new BigDecimal(literal), arguments.getBigDecimal("n"));
         });
-        assertEquals(new BigDecimal(literal), arguments.getBigDecimal("n"));
     }
 
     @Test
@@ -207,21 +222,43 @@ class JsonToolArgumentsTest {
         assertEquals(new BigDecimal("1E+2"), number("1e2").getBigDecimal("n"));
     }
 
+    private static void assertMessage(final ToolArgumentException exception, final String name,
+                                      final String type, final String... forbidden) {
+        assertEquals(name, exception.argumentName());
+        assertTrue(exception.getMessage().contains("'" + name + "'"), exception.getMessage());
+        assertTrue(exception.getMessage().contains(type), exception.getMessage());
+        for (final String text : forbidden) {
+            assertFalse(exception.getMessage().contains(text), exception.getMessage());
+        }
+    }
+
     @Test
     void errorMessagesNameTheArgumentAndTypeButNeverTheValue() {
         final var arguments = args("{\"text\":\"SECRET-VALUE\",\"big\":987654321098765432109876543210,"
                 + "\"frac\":3.14159265}");
-        final var wrongType = assertThrows(ToolArgumentException.class, () -> arguments.getInt("text"));
-        final var outOfRange = assertThrows(ToolArgumentException.class, () -> arguments.getInt("big"));
-        final var fractional = assertThrows(ToolArgumentException.class, () -> arguments.getLong("frac"));
-        final var missing = assertThrows(ToolArgumentException.class, () -> arguments.getBoolean("absent"));
-        assertEquals("text", wrongType.argumentName());
-        assertTrue(wrongType.getMessage().contains("'text'") && wrongType.getMessage().contains("int"));
-        assertTrue(missing.getMessage().contains("'absent'") && missing.getMessage().contains("boolean"));
-        for (final var exception : new ToolArgumentException[]{wrongType, outOfRange, fractional, missing}) {
-            assertFalse(exception.getMessage().contains("SECRET"), exception.getMessage());
-            assertFalse(exception.getMessage().contains("987654321"), exception.getMessage());
-            assertFalse(exception.getMessage().contains("3.14"), exception.getMessage());
-        }
+        assertMessage(assertThrows(ToolArgumentException.class, () -> arguments.getInt("text")),
+                "text", "int", "SECRET");
+        assertMessage(assertThrows(ToolArgumentException.class, () -> arguments.getInt("big")),
+                "big", "int", "987654321");
+        assertMessage(assertThrows(ToolArgumentException.class, () -> arguments.getLong("frac")),
+                "frac", "long", "3.14");
+        assertMessage(assertThrows(ToolArgumentException.class, () -> arguments.getBoolean("absent")),
+                "absent", "boolean");
+    }
+
+    @Test
+    void infinityRejectionNamesTheArgumentAndTypeButNotTheValue() {
+        final var arguments = args("{\"d\":7.25e999,\"f\":-7.25e39}");
+        assertMessage(assertThrows(ToolArgumentException.class, () -> arguments.getDouble("d")),
+                "d", "double", "7.25", "e999", "E+999");
+        assertMessage(assertThrows(ToolArgumentException.class, () -> arguments.getFloat("f")),
+                "f", "float", "7.25", "e39", "E+39");
+    }
+
+    @Test
+    void digitLimitRejectionNamesTheArgumentAndTypeButNotTheValue() {
+        final var arguments = number(new BigDecimal("7".repeat(JsonToolArguments.MAX_INTEGER_DIGITS + 1)));
+        assertMessage(assertThrows(ToolArgumentException.class, () -> arguments.getBigInteger("n")),
+                "n", "BigInteger", "7777");
     }
 }
