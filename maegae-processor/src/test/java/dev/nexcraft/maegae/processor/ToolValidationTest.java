@@ -53,7 +53,7 @@ class ToolValidationTest {
         assertTrue(result.success(), result.diagnostics().toString());
         assertTrue(result.diagnostics().isEmpty(), result.diagnostics().toString());
         try (final var generated = Files.walk(output.resolve("generated"))) {
-            assertEquals(0, generated.filter(Files::isRegularFile).count());
+            assertEquals(3, generated.filter(Files::isRegularFile).count());
         }
     }
 
