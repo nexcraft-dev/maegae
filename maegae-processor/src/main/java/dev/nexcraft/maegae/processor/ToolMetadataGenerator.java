@@ -6,19 +6,19 @@ import javax.annotation.processing.ProcessingEnvironment;
 import javax.lang.model.element.TypeElement;
 import javax.tools.Diagnostic;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HexFormat;
 import java.util.List;
 
 /** Generates one immutable metadata source file per validated provider. */
 final class ToolMetadataGenerator {
     private static final int STRING_CHUNK_LENGTH = 8192;
     private final ProcessingEnvironment environment;
+    private final GeneratedNames names;
 
-    ToolMetadataGenerator(final ProcessingEnvironment environment) {
+    ToolMetadataGenerator(final ProcessingEnvironment environment, final GeneratedNames names) {
         this.environment = environment;
+        this.names = names;
     }
 
     void generate(final TypeElement provider, final List<ToolDeclaration> declarations) {
@@ -33,8 +33,15 @@ final class ToolMetadataGenerator {
         }
         final String packageName = environment.getElementUtils().getPackageOf(provider).getQualifiedName().toString();
         final String binaryName = environment.getElementUtils().getBinaryName(provider).toString();
-        final String className = "MaegaeToolMetadata_" + HexFormat.of().formatHex(
-                binaryName.getBytes(StandardCharsets.UTF_8));
+        final String suffix = names.suffix(binaryName);
+        final var owner = names.claim(suffix, binaryName);
+        if (owner.isPresent()) {
+            environment.getMessager().printMessage(Diagnostic.Kind.ERROR,
+                    "Generated class name suffix '" + suffix + "' is shared by providers '" + owner.get()
+                            + "' and '" + binaryName + "'.", provider);
+            return;
+        }
+        final String className = "MaegaeToolMetadata_" + suffix;
         final String qualifiedName = packageName.isEmpty() ? className : packageName + "." + className;
         try (final var writer = environment.getFiler().createSourceFile(qualifiedName, provider).openWriter()) {
             writer.write(source(packageName, className, metadata));

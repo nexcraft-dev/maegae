@@ -31,6 +31,16 @@ import java.util.Set;
 public final class McpToolProcessor extends AbstractProcessor {
     private final Set<ExecutableElement> processed = new HashSet<>();
     private final Map<TypeElement, Set<String>> providerNames = new HashMap<>();
+    private final GeneratedNames generatedNames;
+
+    /** Creates the processor used by the Java compiler service loader. */
+    public McpToolProcessor() {
+        this(new GeneratedNames());
+    }
+
+    McpToolProcessor(final GeneratedNames generatedNames) {
+        this.generatedNames = generatedNames;
+    }
 
     @Override
     public Set<String> getSupportedAnnotationTypes() {
@@ -64,7 +74,7 @@ public final class McpToolProcessor extends AbstractProcessor {
                     error(element, "@Tool can only annotate a method.");
                 }
             }
-            final var generator = new ToolMetadataGenerator(processingEnv);
+            final var generator = new ToolMetadataGenerator(processingEnv, generatedNames);
             providers.forEach((provider, declarations) -> {
                 if (!invalidProviders.contains(provider)) {
                     generator.generate(provider, declarations);

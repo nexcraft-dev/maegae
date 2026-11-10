@@ -25,7 +25,6 @@ import java.net.URLClassLoader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
@@ -116,14 +115,39 @@ class ToolMetadataGenerationTest {
     }
 
     @Test
+    void generatesMetadataForProviderWithVeryLongBinaryName(@TempDir final Path output) throws Exception {
+        final String packageName = "p".repeat(60) + "." + "q".repeat(60);
+        final String binaryName = packageName + "." + "Outer".repeat(8) + "$" + "Inner".repeat(8);
+        final var result = compile(output, "package " + packageName + ";\n" + IMPORTS
+                + "class " + "Outer".repeat(8) + " { static class " + "Inner".repeat(8)
+                + " { @Tool public void call() {} } }");
+        assertTrue(result.success(), result.diagnostics().toString());
+        assertEquals("call", definitions(result, binaryName).getFirst().name());
+    }
+
+    @Test
     void reportsCollisionWithAnExistingSource(@TempDir final Path output) throws Exception {
-        final String generatedName = "MaegaeToolMetadata_" + HexFormat.of().formatHex(
-                "ExampleTools".getBytes(StandardCharsets.UTF_8));
+        final String generatedName = "MaegaeToolMetadata_" + new GeneratedNames().suffix("ExampleTools");
         final var result = compile(output, IMPORTS + "class ExampleTools { @Tool public void call() {} }\n"
                 + "class " + generatedName + " {}\n");
         assertFalse(result.success());
         assertTrue(result.diagnostics().stream().anyMatch(d -> d.getMessage(Locale.ROOT)
                 .contains("Cannot generate Tool metadata '" + generatedName + "'")), result.diagnostics().toString());
+    }
+
+    @Test
+    void reportsGeneratedNameSuffixCollisionBetweenProviders(@TempDir final Path output) throws Exception {
+        final var result = compile(output, IMPORTS + """
+                class First { @Tool public void call() {} }
+                class Second { @Tool public void call() {} }
+                """, List.of(new McpToolProcessor(new GeneratedNames(binaryName -> "same"))));
+        assertFalse(result.success());
+        assertTrue(result.diagnostics().stream().anyMatch(d -> d.getMessage(Locale.ROOT)
+                .contains("suffix 'same' is shared by providers 'First' and 'Second'")),
+                result.diagnostics().toString());
+        try (final var generated = Files.walk(result.generated())) {
+            assertEquals(1, generated.filter(Files::isRegularFile).count());
+        }
     }
 
     @Test
@@ -200,10 +224,17 @@ class ToolMetadataGenerationTest {
     }
 
     private static Compilation compile(final Path output, final String text) throws Exception {
-        return compile(output, text, false);
+        return compile(output, text, null);
     }
 
     private static Compilation compile(final Path output, final String text, final boolean multipleRounds)
+            throws Exception {
+        return compile(output, text, multipleRounds
+                ? List.of(new McpToolProcessor(), new LaterProviderProcessor()) : null);
+    }
+
+    private static Compilation compile(final Path output, final String text,
+                                       final List<? extends javax.annotation.processing.Processor> processors)
             throws Exception {
         final Path source = output.resolve("ExampleTools.java");
         final Path classes = Files.createDirectory(output.resolve("classes"));
@@ -218,8 +249,8 @@ class ToolMetadataGenerationTest {
                     "--release", "25", "--class-path", core.toString(), "--processor-path",
                     System.getProperty("maegae.processor.jar") + File.pathSeparator + core,
                     "-d", classes.toString(), "-s", generated.toString()), null, files.getJavaFileObjects(source));
-            if (multipleRounds) {
-                task.setProcessors(List.of(new McpToolProcessor(), new LaterProviderProcessor()));
+            if (processors != null) {
+                task.setProcessors(processors);
             }
             task.setLocale(Locale.ROOT);
             return new Compilation(task.call(), List.copyOf(diagnostics.getDiagnostics()), classes, generated);
@@ -231,8 +262,7 @@ class ToolMetadataGenerationTest {
             throws Exception {
         final int separator = binaryName.lastIndexOf('.');
         final String packageName = separator < 0 ? "" : binaryName.substring(0, separator + 1);
-        final String className = packageName + "MaegaeToolMetadata_"
-                + HexFormat.of().formatHex(binaryName.getBytes(StandardCharsets.UTF_8));
+        final String className = packageName + "MaegaeToolMetadata_" + new GeneratedNames().suffix(binaryName);
         try (final var loader = new URLClassLoader(new java.net.URL[]{compilation.classes().toUri().toURL()},
                 ToolDefinition.class.getClassLoader())) {
             return (List<ToolDefinition>) loader.loadClass(className).getMethod("tools").invoke(null);
