@@ -161,7 +161,7 @@ These entries describe internal model and codec support. Runtime support is list
 | List Tools | 📋 Planned |
 | Call Tool | 📋 Planned |
 | Tool Input Validation | 📋 Planned |
-| Automatic JSON Schema Generation | 📋 Planned |
+| Input JSON Schema generation (compile time, per Tool) | ✅ Supported |
 | Annotation-Based Registration | 📋 Planned |
 | Generated Tool Invocation Adapters (compile time, no reflection) | ✅ Supported |
 | Tool List Changed Notification | ⬜ Not Implemented |
@@ -195,6 +195,16 @@ The annotation processor generates one metadata class (`MaegaeToolMetadata_<hash
 | `BigDecimal` | Passed exactly, without rounding. |
 
 Argument errors report only the argument name and the expected type. They never contain the supplied value.
+
+**Target and status.** The v1 target is MCP protocol version 2025-11-25. The registry, the dispatcher, and the transport are **not implemented**. Today the processor generates metadata and adapters that application code can call directly. No MCP server runs yet.
+
+**Limitations.**
+
+- Local and anonymous classes are not discovered. The compiler API shows only declarations that are visible in a round, and a `@Tool` method in a local class may be neither generated nor rejected.
+- Duplicate Tool names across different provider classes are not detected. Each provider is generated on its own. The Tool registry will check this.
+- `structuredContent` and `outputSchema` are not generated. A Tool result is one text value.
+- POJOs, records, collections, arrays, maps, enums, `Optional`, `char`, and parameterized types are not supported as parameters or return values.
+- The generated adapter does not convert exceptions. An argument error (`ToolArgumentException`) and an exception from the Tool method stay distinguishable. A future dispatcher will map them to MCP results.
 
 ### Resources
 
@@ -353,10 +363,10 @@ Provide sensible defaults while allowing developers to configure execution timeo
 - [x] JSON-RPC message parsing, serialization, and standard errors
 - [x] MCP initialization and capability models (2025-11-25)
 - [ ] MCP method dispatch and lifecycle integration
-- [ ] Tool annotations
-- [ ] Annotation processor
-- [ ] JSON Schema generation
-- [ ] Generated tool invocation adapters
+- [x] Tool annotations
+- [x] Annotation processor
+- [x] JSON Schema generation
+- [x] Generated tool invocation adapters
 - [ ] Tool registry
 - [ ] Tool execution with Virtual Threads
 - [ ] Tool timeout handling
