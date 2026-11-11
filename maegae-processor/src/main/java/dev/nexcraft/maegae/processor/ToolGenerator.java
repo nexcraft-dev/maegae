@@ -8,14 +8,16 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 
 /**
- * Generates the metadata class and the invocation adapter of one provider as one unit.
+ * Generates the metadata class, the invocation adapter and the binding of one provider as one unit.
  * If any declaration is invalid, or any generated name is taken, no file is written.
  */
 final class ToolGenerator {
     private static final String METADATA_KIND = "Tool metadata";
     private static final String INVOKERS_KIND = "Tool invokers";
+    private static final String BINDING_KIND = "Tool binding";
 
     private final ProcessingEnvironment environment;
     private final GeneratedNames names;
@@ -25,7 +27,12 @@ final class ToolGenerator {
         this.names = names;
     }
 
-    void generate(final TypeElement provider, final List<ToolDeclaration> declarations) {
+    /**
+     * Generates the three classes of a provider.
+     *
+     * @return the qualified name of the binding if all three classes were written, otherwise empty
+     */
+    Optional<String> generate(final TypeElement provider, final List<ToolDeclaration> declarations) {
         final List<ToolDeclaration> sorted = declarations.stream()
                 .sorted(Comparator.comparing(ToolDeclaration::name)).toList();
         final String packageName = environment.getElementUtils().getPackageOf(provider).getQualifiedName().toString();
@@ -36,30 +43,34 @@ final class ToolGenerator {
             environment.getMessager().printMessage(Diagnostic.Kind.ERROR,
                     "Generated class name suffix '" + suffix + "' is shared by providers '" + owner.get()
                             + "' and '" + binaryName + "'.", provider);
-            return;
+            return Optional.empty();
         }
         final String metadataClass = "MaegaeToolMetadata_" + suffix;
         final String invokersClass = "MaegaeToolInvokers_" + suffix;
+        final String bindingClass = "MaegaeToolBinding_" + suffix;
         final var messager = environment.getMessager();
         // Render both sources before the first check, so one run reports every diagnostic.
         final var metadata = new ToolMetadataGenerator(messager).source(packageName, metadataClass, sorted);
         final var invokers = new ToolInvokerGenerator(messager).source(packageName, invokersClass, provider, sorted);
         if (metadata.isEmpty() || invokers.isEmpty()) {
-            return;
+            return Optional.empty();
         }
         final Source metadataSource = new Source(METADATA_KIND, qualified(packageName, metadataClass),
                 metadata.get());
         final Source invokersSource = new Source(INVOKERS_KIND, qualified(packageName, invokersClass),
                 invokers.get());
-        if (taken(metadataSource, provider) | taken(invokersSource, provider)) {
-            return;
+        final Source bindingSource = new Source(BINDING_KIND, qualified(packageName, bindingClass),
+                new ToolBindingGenerator().source(packageName, bindingClass, provider, metadataClass,
+                        invokersClass));
+        if (taken(metadataSource, provider) | taken(invokersSource, provider) | taken(bindingSource, provider)) {
+            return Optional.empty();
         }
         final List<Element> origins = new ArrayList<>();
         origins.add(provider);
         sorted.forEach(declaration -> origins.add(declaration.method()));
-        if (write(metadataSource, origins, provider)) {
-            write(invokersSource, origins, provider);
-        }
+        final boolean written = write(metadataSource, origins, provider)
+                && write(invokersSource, origins, provider) && write(bindingSource, origins, provider);
+        return written ? Optional.of(bindingSource.qualifiedName()) : Optional.empty();
     }
 
     private boolean taken(final Source source, final TypeElement provider) {

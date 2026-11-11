@@ -234,11 +234,15 @@ class ToolPipelineTest {
             final String directory = separator < 0 ? "" : binaryName.substring(0, separator + 1).replace('.', '/');
             expectedFiles.add(directory + "MaegaeToolMetadata_" + suffix + ".java");
             expectedFiles.add(directory + "MaegaeToolInvokers_" + suffix + ".java");
+            expectedFiles.add(directory + "MaegaeToolBinding_" + suffix + ".java");
         }
         assertEquals(providers.size(), suffixes.size());
         assertEquals(expectedFiles.stream().sorted().toList(), first.generatedFiles());
-        assertEquals(1, first.generatedFiles().stream().map(file -> file.substring(file.lastIndexOf('/') + 1)
-                .length()).distinct().count(), "Generated file names have one fixed length.");
+        // Metadata and Invokers have the same name length. Binding is one character shorter.
+        assertEquals(2, first.generatedFiles().stream().map(file -> file.substring(file.lastIndexOf('/') + 1)
+                .length()).distinct().count(), "Generated file names have a fixed length per kind.");
+        assertEquals(1, first.generatedFiles().stream().map(file -> file.substring(file.lastIndexOf('_') + 1)
+                .length()).distinct().count(), "The suffix has one fixed length.");
 
         // The same Tool name "who" exists in every provider. Generation does not compare providers.
         for (final String binaryName : providers.keySet()) {
@@ -312,8 +316,8 @@ class ToolPipelineTest {
         assertFalse(compilation.success());
         assertEquals(1, compilation.errors().size(), compilation.diagnostics().toString());
         final String goodSuffix = new GeneratedNames().suffix("Good");
-        assertEquals(List.of("MaegaeToolInvokers_" + goodSuffix + ".java", "MaegaeToolMetadata_" + goodSuffix + ".java"),
-                compilation.generatedFiles());
+        assertEquals(List.of("MaegaeToolBinding_" + goodSuffix + ".java", "MaegaeToolInvokers_" + goodSuffix + ".java",
+                "MaegaeToolMetadata_" + goodSuffix + ".java"), compilation.generatedFiles());
         assertEquals(0, compilation.classFileCount());
     }
 
@@ -408,6 +412,7 @@ class ToolPipelineTest {
         final List<String> expected = new ArrayList<>();
         for (final String provider : List.of("Early", "Late")) {
             final String suffix = new GeneratedNames().suffix(provider);
+            expected.add("MaegaeToolBinding_" + suffix + ".java");
             expected.add("MaegaeToolInvokers_" + suffix + ".java");
             expected.add("MaegaeToolMetadata_" + suffix + ".java");
         }
@@ -536,7 +541,8 @@ class ToolPipelineTest {
         final String suffix = new GeneratedNames().suffix("example.Tools");
         final List<String> expected = List.of("CLASS:example.Tools", "METHOD:alpha()", "METHOD:beta(int)");
         assertEquals(Map.of("example.MaegaeToolMetadata_" + suffix, expected,
-                "example.MaegaeToolInvokers_" + suffix, expected), recorder.origins);
+                "example.MaegaeToolInvokers_" + suffix, expected,
+                "example.MaegaeToolBinding_" + suffix, expected), recorder.origins);
     }
 
     // F. Null returns of boxed types

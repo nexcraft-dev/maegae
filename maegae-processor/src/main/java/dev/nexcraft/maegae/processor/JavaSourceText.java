@@ -5,6 +5,12 @@ final class JavaSourceText {
     private JavaSourceText() {
     }
 
+    /** Renders the provider type for source code. A generic provider uses wildcards, for example {@code Box<?>}. */
+    static String providerType(final javax.lang.model.element.TypeElement provider) {
+        final int parameters = provider.getTypeParameters().size();
+        return provider.getQualifiedName() + (parameters == 0 ? "" : "<" + "?, ".repeat(parameters - 1) + "?>");
+    }
+
     /** Renders a string literal that uses only printable ASCII characters. */
     static String string(final String value) {
         final StringBuilder result = new StringBuilder("\"");

@@ -185,6 +185,7 @@ These entries describe internal model and codec support. Runtime support is list
 | Input JSON Schema generation (compile time, per Tool) | ✅ Supported |
 | Annotation-Based Registration | 📋 Planned |
 | Generated Tool Invocation Adapters (compile time, no reflection) | ✅ Supported |
+| Generated Tool Bindings and `ServiceLoader` file (compile time) | ✅ Supported |
 | Tool List Changed Notification | ⬜ Not Implemented |
 
 #### Tool Method Support
@@ -216,6 +217,29 @@ The annotation processor generates one metadata class (`MaegaeToolMetadata_<hash
 | `BigDecimal` | Passed exactly, without rounding. |
 
 Argument errors report only the argument name and the expected type. They never contain the supplied value.
+
+#### Tool binding discovery
+
+The processor also generates one binding class (`MaegaeToolBinding_<hash>`) for each provider class. A binding implements the SPI `dev.nexcraft.maegae.protocol.mcp.ToolProviderBinding`:
+
+```java
+public interface ToolProviderBinding {
+    Class<?> providerType();
+    List<ToolDefinition> tools();
+    Map<String, ToolInvoker> invokers(Object provider);
+}
+```
+
+The processor writes `META-INF/services/dev.nexcraft.maegae.protocol.mcp.ToolProviderBinding` once, in the last round. The file lists the bindings of all providers, sorted, one per line. The file is not written if the compilation has an error. The three generated classes of a provider are generated together, or not at all.
+
+The future runtime will find the bindings with `java.util.ServiceLoader`. The runtime is **not implemented yet**. Maegae never uses reflection to find or call Tool methods. Binding discovery uses `ServiceLoader`, and the generated code calls the Tool methods directly.
+
+**Binding limitations.**
+
+- The runtime must match the exact provider class. Subclasses and anonymous classes are not supported.
+- Discovery works on the class path. With JPMS, `module-info.java` needs a `provides` clause that you write by hand.
+- The processor is an aggregating processor. When one annotated class changes, Gradle processes all annotated classes again.
+- Native image builds are not verified yet.
 
 **Target and status.** The v1 target is MCP protocol version 2025-11-25. The registry, the dispatcher, and the transport are **not implemented**. Today the processor generates metadata and adapters that application code can call directly. No MCP server runs yet.
 

@@ -106,7 +106,7 @@ class ToolMetadataGenerationTest {
         assertEquals("same", definitions(first, "ExampleTools_Nested").getFirst().name());
         try (final var files = Files.walk(first.generated())) {
             final var sources = files.filter(Files::isRegularFile).sorted().toList();
-            assertEquals(6, sources.size());
+            assertEquals(9, sources.size());
             for (final Path sourceFile : sources) {
                 assertEquals(Files.readString(sourceFile),
                         Files.readString(second.generated().resolve(first.generated().relativize(sourceFile))));
@@ -146,7 +146,7 @@ class ToolMetadataGenerationTest {
                 .contains("suffix 'same' is shared by providers 'First' and 'Second'")),
                 result.diagnostics().toString());
         try (final var generated = Files.walk(result.generated())) {
-            assertEquals(2, generated.filter(Files::isRegularFile).count());
+            assertEquals(3, generated.filter(Files::isRegularFile).count());
         }
     }
 
@@ -157,8 +157,8 @@ class ToolMetadataGenerationTest {
         assertEquals("first", definitions(result, "ExampleTools").getFirst().name());
         assertEquals("later", definitions(result, "LaterTools").getFirst().name());
         try (final var files = Files.walk(result.generated())) {
-            // LaterTools source, plus metadata and invokers for both providers.
-            assertEquals(5, files.filter(Files::isRegularFile).count());
+            // LaterTools source, plus metadata, invokers and binding for both providers.
+            assertEquals(7, files.filter(Files::isRegularFile).count());
         }
     }
 

@@ -4,6 +4,7 @@ import dev.nexcraft.maegae.annotation.Arg;
 import dev.nexcraft.maegae.annotation.Tool;
 
 import javax.annotation.processing.AbstractProcessor;
+import javax.annotation.processing.FilerException;
 import javax.annotation.processing.RoundEnvironment;
 import javax.lang.model.SourceVersion;
 import javax.lang.model.element.Element;
@@ -15,6 +16,7 @@ import javax.lang.model.element.TypeElement;
 import javax.lang.model.element.VariableElement;
 import javax.lang.model.type.TypeKind;
 import javax.tools.Diagnostic;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -22,6 +24,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 
 /**
  * Discovers and validates Tool declarations exposed by annotation processing.
@@ -33,6 +36,9 @@ import java.util.Set;
  * under {@code -Xlint:all -Werror}. This reverses the T02 decision (Tool only, unclaimed). The T02 reason
  * was that no processing existed. Processing exists now.</p>
  *
+ * <p>The processor is aggregating: the service file of the Tool bindings lists every provider.
+ * It is written once, in the final round, and only if no error was raised.</p>
+ *
  * <p>Consequence: a processor that runs after this one does not see {@code @Tool} or {@code @Arg}
  * on user classes. A processor that runs before this one does.</p>
  */
@@ -40,6 +46,9 @@ public final class McpToolProcessor extends AbstractProcessor {
     private final Set<ExecutableElement> processed = new HashSet<>();
     private final Map<TypeElement, Set<String>> providerNames = new HashMap<>();
     private final GeneratedNames generatedNames;
+    /** Binding binary names with their providers, sorted by name. */
+    private final Map<String, TypeElement> bindings = new TreeMap<>();
+    private boolean failed;
 
     /** Creates the processor used by the Java compiler service loader. */
     public McpToolProcessor() {
@@ -79,18 +88,42 @@ public final class McpToolProcessor extends AbstractProcessor {
                         }
                     }
                 } else {
+                    failed = true;
                     error(element, "@Tool can only annotate a method.");
                 }
             }
             final var generator = new ToolGenerator(processingEnv, generatedNames);
             providers.forEach((provider, declarations) -> {
-                if (!invalidProviders.contains(provider)) {
-                    generator.generate(provider, declarations);
+                if (invalidProviders.contains(provider)) {
+                    failed = true;
+                } else {
+                    generator.generate(provider, declarations).ifPresentOrElse(
+                            binding -> bindings.put(binding, provider), () -> failed = true);
                 }
             });
+            failed |= roundEnv.errorRaised();
+        } else {
+            writeServiceFile(roundEnv);
         }
         // Claims Tool and Arg. See the class Javadoc for the reason and the effect on other processors.
         return true;
+    }
+
+    private void writeServiceFile(final RoundEnvironment roundEnv) {
+        if (bindings.isEmpty() || failed || roundEnv.errorRaised()) {
+            return;
+        }
+        try {
+            BindingServiceFile.write(processingEnv.getFiler(), bindings.keySet(),
+                    bindings.values().toArray(Element[]::new));
+        } catch (FilerException exception) {
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, "Cannot write '"
+                    + BindingServiceFile.PATH + "': the file already exists or was opened before. "
+                    + "Remove the other writer of this file. Maegae does not merge it. " + exception.getMessage());
+        } catch (IOException exception) {
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, "Cannot write '"
+                    + BindingServiceFile.PATH + "': " + exception.getMessage());
+        }
     }
 
     private ToolDeclaration discover(final ExecutableElement method) {
