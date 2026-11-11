@@ -1,0 +1,30 @@
+name: Native smoke
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  native-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      # Actions are pinned to version tags here. Pinning to a commit SHA is recommended, as in ci.yml.
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '25'
+          distribution: 'graalvm-community'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Show versions
+        run: |
+          java -version
+          native-image --version
+      - name: Native image smoke test
+        run: ./gradlew :maegae-native-smoke:nativeSmokeTest
