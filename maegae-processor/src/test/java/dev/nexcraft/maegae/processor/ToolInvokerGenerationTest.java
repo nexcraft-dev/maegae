@@ -307,7 +307,7 @@ class ToolInvokerGenerationTest {
         assertTrue(second.success(), second.diagnostics().toString());
         try (final var files = Files.walk(first.generated())) {
             final var generated = files.filter(Files::isRegularFile).sorted().toList();
-            assertEquals(2, generated.size());
+            assertEquals(3, generated.size());
             for (final Path file : generated) {
                 assertEquals(Files.readString(file),
                         Files.readString(second.generated().resolve(first.generated().relativize(file))));

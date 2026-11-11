@@ -101,9 +101,7 @@ final class ToolInvokerGenerator {
 
     private String render(final String packageName, final String className, final TypeElement provider,
                           final List<ToolDeclaration> declarations, final List<Method> methods) {
-        final String providerType = provider.getQualifiedName()
-                + (provider.getTypeParameters().isEmpty() ? "" : "<" + "?, ".repeat(
-                provider.getTypeParameters().size() - 1) + "?>");
+        final String providerType = JavaSourceText.providerType(provider);
         final String mapType = "java.util.Map<java.lang.String, " + INVOKER + ">";
         final StringBuilder result = new StringBuilder();
         if (!packageName.isEmpty()) {

@@ -109,8 +109,8 @@ class McpToolProcessorTest {
             final var compiled = classFiles.filter(Files::isRegularFile).map(classes::relativize).sorted().toList();
             final var sources = generatedFiles.filter(Files::isRegularFile).toList();
             assertTrue(compiled.contains(Path.of("ExampleTools.class")), compiled.toString());
-            assertEquals(hasTool ? 3 : 1, compiled.size(), compiled.toString());
-            assertEquals(hasTool ? 2 : 0, sources.size(), sources.toString());
+            assertEquals(hasTool ? 5 : 1, compiled.size(), compiled.toString());
+            assertEquals(hasTool ? 3 : 0, sources.size(), sources.toString());
         }
         return trace.toString();
     }
