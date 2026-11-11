@@ -2,8 +2,8 @@
 
 Last Updated: 2026-11-11
 Project: Maegae
-Status: M04-T05 merged into main. M04-T06 is next.
-Next Task: M04-T06 — Integration & Hardening
+Status: Milestone M04 (Tool Annotation & Metadata) is complete and merged into main. The runtime is not implemented.
+Next Task: Plan the runtime milestones (section 11). Nothing is decomposed or approved yet.
 
 ---
 
@@ -71,6 +71,7 @@ The runtime (registry, dispatcher, transport, public server API) is NOT implemen
 | JSON Representation | Internal immutable JSON model |
 | Annotation Processing | Java Annotation Processing API |
 | Testing | JUnit Jupiter 6, ArchUnit |
+| CI | GitHub Actions, `ubuntu-latest` only (agent-reported) |
 | License | Apache License 2.0 |
 | Base Package | dev.nexcraft.maegae |
 
@@ -96,10 +97,10 @@ maegae/
 └── build.gradle / settings.gradle
 ```
 
-- **maegae-core**: JSON foundation, JSON-RPC models and parsing, MCP protocol models, Tool contracts and runtime metadata, transport-independent logic. Must not depend on Netty.
-- **maegae-processor**: @Tool/@Arg processing, validation, metadata and JSON Schema generation, invocation adapter generation. The processor class name is `McpToolProcessor`. Do not rename it.
+- **maegae-core**: JSON foundation, JSON-RPC models and parsing, MCP protocol models, Tool contracts and runtime metadata, transport-independent logic. Must not depend on Netty. Agent-reported dependencies seen through Gradle: jackson-core 3.2.2 and slf4j-api 2.0.20.
+- **maegae-processor**: @Tool/@Arg processing, validation, metadata and JSON Schema generation, invocation adapter generation. The processor class name is `McpToolProcessor`. Do not rename it. It declares `implementation(project(":maegae-core"))`.
 - **maegae-transport-netty**: Netty Streamable HTTP transport. Netty details stay isolated from core.
-- **maegae-example**: not a priority until the runtime works.
+- **maegae-example**: not built yet. Not a priority until the runtime works.
 
 ---
 
@@ -107,9 +108,9 @@ maegae/
 
 ### Decision
 
-**v1 targets MCP 2025-11-25.** Keep annotation-processing work (M04) version-neutral. Plan 2026-07-28 support as a separate later milestone. Keep the list of negotiable protocol versions configurable.
+**v1 targets MCP 2025-11-25.** Keep annotation-processing work version-neutral. Plan 2026-07-28 support as a separate later milestone. Keep the list of negotiable protocol versions configurable.
 
-Reasons: M03 built `initialize` models. The 2026-07-28 changes (below) are dispatcher and transport work and do not affect M04. The user preferred 2025-11-25 unless the newer spec had a compelling advantage.
+Reasons: M03 built `initialize` models. The 2026-07-28 changes (below) are dispatcher and transport work. The user preferred 2025-11-25 unless the newer spec had a compelling advantage.
 
 ### Researched facts (2026-11-11; secondary sources, the official 2026-07-28 changelog was not fetched directly)
 
@@ -123,8 +124,8 @@ Reasons: M03 built `initialize` models. The 2026-07-28 changes (below) are dispa
 
 ### Not verified
 
-- The protocol version string that M03 actually selected. The user did not report the result of `grep -rn "2025-\|2026-" maegae-core/src`. Inspect M03 before the runtime milestone.
-- Whether the spec allows an empty `content` array in `CallToolResult`. T05 maps void/null returns to an empty output. Verify before the dispatcher is built.
+- The protocol version string that M03 actually selected. The user never reported the result of `grep -rn "2025-\|2026-" maegae-core/src`. Inspect M03 before the runtime milestone.
+- Whether the spec allows an empty `content` array in `CallToolResult`. The generated adapters map void and null returns to an empty `ToolOutput`. Verify before the dispatcher is built.
 
 ### Transport design (v1)
 
@@ -167,7 +168,7 @@ M03 also added MCP initialize models (request params, result, protocol version, 
 
 ---
 
-## 6. Annotations and Processor (M04-T01 to T03)
+## 6. Annotations and Processor (M04-T01 to T03, T06)
 
 ```java
 @Target(ElementType.METHOD) @Retention(RetentionPolicy.CLASS)
@@ -179,21 +180,32 @@ public @interface Arg { String name() default ""; String description() default "
 
 Empty name means the Java method or parameter name. Unannotated parameters are required.
 
-Processor behavior: discovers @Tool methods, resolves effective names, validates declarations (agent-reported: non-public methods are rejected with "must be public"), detects duplicate Tool names within a provider and duplicate argument names, reports actionable diagnostics, supports normal and nested provider classes, uses no runtime reflection.
+Processor behavior: discovers @Tool methods, resolves effective names, validates declarations (non-public methods are rejected with "must be public"), detects duplicate Tool names within a provider and duplicate argument names, reports actionable diagnostics (line number, Tool, argument, type), supports normal and nested provider classes, uses no runtime reflection.
+
+**Registration (agent-reported, T06):** `META-INF/services/javax.annotation.processing.Processor` lists `dev.nexcraft.maegae.processor.McpToolProcessor`. Tests compile with `--processor-path` and no explicit processor.
 
 **Known limitation (approved in T03):** discovery is limited to declarations exposed by RoundEnvironment. Local classes are outside the supported scope. Their @Tool annotations may not be discovered or rejected. Do not claim all unsupported declarations produce compile errors. Do not add compiler-tree scanning for local classes. Keep this limitation documented.
+
+### Annotation claiming (decision in T06)
+
+`McpToolProcessor` supports `Tool` and `Arg` and returns `true` from `process`. Commit `cf73f0a` changed this from T02 (Tool only, returns false; the T02 reason was that no processing existed yet).
+
+- Why: with `false`, every build with `-Xlint:all -Werror` failed with "No processor claimed any of these annotations" (reproduced by the agent). A standard processor has no other way to avoid that warning.
+- Consequence: a processor that runs after Maegae does not see @Tool or @Arg on user classes. A processor that runs before Maegae does. A processor supporting `*` is called only in round 2 (agent-measured with a scratch observer processor).
+- The user approved keeping the claim. The reason is documented in the processor Javadoc and in the README limitations (follow-up commit, see section 10).
+- Note: the agent made this production-contract change without asking first, because the T06 prompt allowed `-Xlint` fixes. Future prompts should say "stop and report before changing a production contract".
 
 ---
 
 ## 7. Tool Metadata and Schema (M04-T04)
 
-Agent-reported state after T05:
+Agent-reported state:
 
-- One generated file per provider: `MaegaeToolMetadata_<suffix>`. `public final class`, private constructor, same package as the provider. One public method: `public static List<ToolDefinition> tools()` returning an immutable list sorted by Tool name.
+- One generated file per provider: `MaegaeToolMetadata_<suffix>`. `public final class`, private constructor, same package as the provider (default package supported). One public method: `public static List<ToolDefinition> tools()` returning an immutable list sorted by Tool name.
 - `ToolDefinition(String name, Optional<String> description, String inputSchemaJson)` is a public record in `maegae-core` (`protocol/mcp/`). `inputSchemaJson` is a JSON object stored as a string. A future serializer must insert it as a JSON object, not as a JSON string.
 - Long schema strings are split into 8192-character chunks (`STRING_CHUNK_LENGTH`).
 - If any declaration fails, no file is generated.
-- Processor classes: `ToolDeclaration` and `ArgumentDeclaration` (package-private records), `ToolSchemaGenerator`, `ToolMetadataGenerator` (now a renderer), `ToolGenerator` (writes both files together), `ToolInvokerGenerator`, `ToolType`, `JavaSourceText`, `GeneratedNames`.
+- Processor classes: `ToolDeclaration` and `ArgumentDeclaration` (package-private records), `ToolSchemaGenerator`, `ToolMetadataGenerator` (renderer), `ToolGenerator` (writes both files together), `ToolInvokerGenerator`, `ToolType`, `JavaSourceText`, `GeneratedNames`.
 
 Type mapping (schema and conversion share `ToolType`):
 
@@ -206,13 +218,13 @@ Type mapping (schema and conversion share `ToolType`):
 
 Not supported: POJOs, records, collections, arrays, maps, enums, Optional, generic parameterized types.
 
-### Generated class naming (changed in T05)
+### Generated class naming
 
-T04 originally used the hex of the UTF-8 bytes of the binary name as the suffix. Hex doubles the length, and a long package plus a nested class gave a 299-byte file name that failed with `File name too long` (found by a T05 preflight test). Commit `c629cb4` replaced it with a SHA-256 hex digest (64 characters, fixed length, so the file name is 88 characters). A hash collision between two providers is a compile error (`GeneratedNames`). This was verified only on macOS.
+T04 originally used the hex of the UTF-8 bytes of the binary name as the suffix. Hex doubles the length, and a long package plus a nested class gave a 299-byte file name that failed with `File name too long` (found by a T05 preflight test). Commit `c629cb4` replaced it with a SHA-256 hex digest (64 characters, fixed length, 88-character file name). A hash collision between two providers is a compile error (`GeneratedNames`). The fix was verified on macOS. CI runs on `ubuntu-latest`, so check the Linux result of the PRs.
 
 ---
 
-## 8. Invocation Adapters (M04-T05, merged)
+## 8. Invocation Adapters (M04-T05)
 
 ### Public contract (package `dev.nexcraft.maegae.tool`, in maegae-core)
 
@@ -246,9 +258,9 @@ public interface ToolInvoker { ToolOutput invoke(ToolArguments args) throws Exce
 ### Generated adapter
 
 - One file per provider: `MaegaeToolInvokers_<same suffix rule>`. `public final class`, private constructor, same package as the provider.
-- One public method: `static Map<String, ToolInvoker> invokers(Provider provider)`. Keys are effective Tool names (same as in `ToolDefinition`). Immutable, in Tool name order. A null provider throws NullPointerException. A generic provider class takes `Provider<?>`.
-- Both files (metadata and invokers) are generated together. If any declaration fails, neither is generated.
-- Member names come from Java method names, never Tool names. Collisions get a numeric suffix. A collision with a user class is a compile error. Provider elements are passed as originating elements to Filer. Output is deterministic.
+- One public method: `static Map<String, ToolInvoker> invokers(Provider provider)`. Keys are effective Tool names (same as in `ToolDefinition`). Immutable, in Tool name order. A null provider throws NullPointerException. A generic provider class takes a wildcard type, for example `Box<?>` or `Pair<?, ?>`.
+- Both files (metadata and invokers) are generated together. If any declaration fails, neither is generated for that provider.
+- Member names come from Java method names, never Tool names. Collisions get a numeric suffix. A collision with a user class is a compile error. Provider elements are passed as originating elements to Filer (verified with a recording Filer). Output is deterministic.
 - The adapter does not catch exceptions from the Tool method. They propagate unchanged.
 
 ### Argument rules
@@ -276,11 +288,11 @@ Mutation results (agent-reported, JDK 25):
 | `integerDigits <= 0` | Survives. Result and time are the same on JDK 25. |
 | floating-point exponent precheck | Survives. Result and time are the same on JDK 25. |
 
-The two surviving checks stay as guards that do not depend on JDK internals. T06 adds a code comment saying so.
+The two surviving checks stay as guards that do not depend on JDK internals. Code comments say so (T06). A 5-second preemptive timeout test exists in `JsonToolArgumentsTest`. CI flakiness on slow runners was not checked.
 
 ### Return values
 
-Supported return types: void; String; boolean, byte, short, int, long, float, double and boxed types; BigInteger; BigDecimal. Any other return type is a compile error that names the Tool.
+Supported return types: void; String; boolean, byte, short, int, long, float, double and boxed types; BigInteger; BigDecimal. Any other return type is a compile error that names the Tool and the offending type.
 
 - void and null results: `ToolOutput.empty()`.
 - String: as is. Other types: `String.valueOf(result)`. BigDecimal uses `toString()` (for example `1E+2`). `NaN` becomes the text `NaN`.
@@ -318,53 +330,68 @@ Supported return types: void; String; boolean, byte, short, int, long, float, do
 | M04-T03 Discovery & Validation | Complete |
 | M04-T04 Metadata & JSON Schema | Complete, merged |
 | M04-T05 Invocation Adapter Generation | Complete, merged (user-reported). PR #20, merge commit a25372b |
-| M04-T06 Integration & Hardening | Next |
+| M04-T06 Integration & Hardening | Complete, merged (user-reported). PR #22, merge commit d1239b5 |
+| Runtime milestones | Not planned yet |
 
-T05 commits on the feature branch (agent-reported): `c629cb4` (hash-based class names), `4e070af` (adapter generation), `a17a557` (test hardening). The merge method may have changed these hashes.
+Commits on the feature branches (agent-reported; the merge method may have changed these hashes):
+- T05: `c629cb4` (hash-based class names), `4e070af` (adapter generation), `a17a557` (test hardening).
+- T06: `cf73f0a` (processor claims Tool and Arg), `3cf1f05` (end-to-end pipeline tests and README), `da4d12d` (annotation-claiming documentation and Gradle usage in README).
 
-Test counts after `a17a557` (agent-reported): core 382, processor 80, netty 35, no failures.
+Test counts at the end of T06, before the follow-up commit (agent-reported): core 382, processor 96, netty 35, no failures or skips. The CI result of the T05 and T06 PRs was not reported to the assistant.
 
 M04 was planned with seven tasks. The metadata and schema tasks were merged into one, so M04 has six.
 
----
+### T06 results (agent-reported)
 
-## 11. Next Task — M04-T06 Integration & Hardening
+- `PipelineHarness` and `ToolPipelineTest` (16 cases from 6 methods) compile with `-Xlint:all -Werror` and use `--processor-path`.
+- Consistency (item A): one loop over 28 Tools driven by the generated schema checks valid values, wrong JSON types, `required` list behavior, names and descriptions. Mutation checks M1–M4 (type mapping, required list, optional getter, description) were killed by this test. A swap of same-typed parameter names (M5) is caught only by the older T05 test `runsTheMatchingMethodWithArgumentsMappedByName`.
+- Six providers (public, package-private, nested, default package, `a.Tools`, `b.Tools`) compile together. All define a Tool named `who`, and generation does not collide. Duplicate detection across providers is registry work and is not implemented.
+- A valid provider plus an invalid provider in one compilation: one error, the invalid provider gets no files, the valid provider still gets both files, javac writes no `.class` files. This matches the current code. It is not a specified contract.
+- Another processor that generates a provider in round one works in both processor orders, with each provider generated once.
+- Generic providers (`Box<T extends Number>`, `Pair<A, B extends Comparable<B>>`) compile and run with no warnings.
+- Null returns for Boolean, Byte, Short, Long, Float, Double and BigInteger give `ToolOutput.empty()`.
 
-Start from main after the T05 merge. Branch: `feat/m04-t06-integration-hardening`.
+### Real Gradle consumer check (agent-reported, scratch project, not committed)
 
-Preflight:
-1. Check how the processor is registered for normal javac discovery (`META-INF/services/javax.annotation.processing.Processor` or equivalent). All tests so far used a test harness, so real-build discovery is unverified.
-2. Report what a user must declare in Gradle (annotationProcessor, compileOnly, implementation) because generated code uses core types. Do not change dependencies before reporting.
+Used a composite build (`includeBuild`) with explicit `dependencySubstitution`, because the repository sets no group or version. `compileJava` had `-Xlint:all -Werror`.
 
-Work items:
-- **A. Consistency (core of T06).** Compile providers covering all supported types. Assert that `ToolDefinition` names and invoker map keys are the same, in the same order. For every supported Java type, assert the invoker accepts a valid value for its schema type and rejects a wrong JSON type. Assert the schema `required` list matches invoker behavior. Assert descriptions and name overrides match.
-- **B. Multiple providers.** Top-level public, package-private, public static nested, default package, same simple name in different packages. Assert generated files and that each adapter runs the right provider. Compile twice and compare all files. Same Tool name in different providers: document that cross-provider duplicate detection is future registry work. Do not implement it.
-- **C. Warnings.** Compile all generated sources with `-Xlint:all -Werror`. Fix the generator if warnings appear (for example `Provider<?>`). Run a generic provider.
-- **D. Failure behavior.** Valid provider plus invalid provider in one compilation. Document and test the actual file behavior. If it is unsafe, stop and report. Spot-check three diagnostics for line number and for naming the Tool, argument, and type. The unsupported return type diagnostic must name the offending type (T05 review found its test did not assert this).
-- **E. Rounds.** Another processor generates sources in round one. Assert no double generation. Assert Filer originating elements are set on both files.
-- **F. Boxed null returns.** One parameterized test for null returns of Boolean, Byte, Short, Long, Float, Double, BigInteger giving `ToolOutput.empty()`.
-- **G. Comment.** Add the hardening comment at the two surviving prechecks. No behavior change.
-- **H. README.** Update the support matrix and the limitations section: local classes not discovered, no cross-provider duplicate detection, no `structuredContent`/`outputSchema`, no POJO/record/collection/array/enum/Optional support, MCP 2025-11-25 target, runtime not implemented.
+| Declarations | Result |
+|---|---|
+| `annotationProcessor` (processor) + `implementation` (core) | Compiles. Recommended. |
+| `annotationProcessor` (processor) + `compileOnly` (core) | Compiles, but the runtime classpath is empty, so the generated adapters cannot run. |
+| `annotationProcessor` only | Fails: package `dev.nexcraft.maegae.annotation` does not exist. |
 
-Verification: run `./gradlew clean build` twice (checks flakiness, including the 5 s preemptive timeout test in `JsonToolArgumentsTest`).
-
-Out of scope: registry, dispatcher, `CallToolResult` conversion, HTTP transport, sessions, authentication, POJO conversion, `structuredContent`, version negotiation, the `maegae-example` module. Do not implement the runtime just to test annotation processing.
+Gradle resolves the processor's runtime variant, so core reaches the annotation processor path automatically. Generated files compiled under `-Xlint:all -Werror` in the real build. Not verified: published artifacts (no `maven-publish` setup exists), POM transitive scopes, a non-macOS host. Coordinates and versions in the README are provisional.
 
 ---
 
-## 12. Open Items for Later Milestones
+## 11. Next Step — Runtime Milestones (not planned yet)
 
-- Tool registry: register adapters, associate with provider instances, detect duplicate Tool names across providers.
-- How the runtime finds generated classes without reflection (for example `ServiceLoader`). This needs public classes and public constructors, which is a registration-phase decision.
-- Dispatcher: `initialize`, version negotiation, `tools/list`, `tools/call`, JSON-RPC error semantics, no response to valid notifications, mapping of `ToolArgumentException` and other exceptions per section 9, conversion of `ToolOutput` to `CallToolResult`. Verify that the spec allows an empty `content` array.
-- Tool execution: virtual threads, configurable timeouts (a timeout may not interrupt blocking code), optional concurrency limits.
-- Netty Streamable HTTP: stateless, `/mcp`, Origin validation, request limits.
-- 2026-07-28 support: `server/discover`, `_meta`, `Mcp-Method`/`Mcp-Name` headers, any-root `structuredContent`.
-- `structuredContent`/`outputSchema` generation (object root is required in 2025-11-25, so scalar returns need wrapping).
-- Public server API (`Maegae.server()...listen()`), a minimal example, real MCP client interoperability.
-- README roadmap checkboxes were not updated in T05.
-- CI: check whether the OS matrix includes a non-macOS system. The 255-byte file-name fix was only verified on macOS.
-- stateless mode has no server-initiated requests. Note this in the README limitations when the runtime exists.
+The user has not approved any decomposition. The numbering and the task split must be agreed before any prompt is written. A suggested order from the assistant, for discussion only:
+
+1. Tool registry: register generated adapters with provider instances, detect duplicate Tool names across providers, expose `ToolDefinition` lists. Decide how the runtime finds generated classes without reflection (for example `ServiceLoader`; this needs public classes and public constructors).
+2. MCP dispatcher in core: `initialize`, version negotiation, `tools/list`, `tools/call`, JSON-RPC error semantics, no response to valid notifications, mapping of failures per section 9, conversion of `ToolOutput` to `CallToolResult`. Verify the empty-`content` question and the M03 version string first.
+3. Tool execution: virtual threads, configurable timeouts (a timeout may not interrupt blocking code), optional concurrency limits.
+4. Netty Streamable HTTP transport: stateless, `/mcp`, Origin validation, request limits.
+5. Public server API (`Maegae.server()...listen()`), `maegae-example`, real MCP client interoperability (including a real Gradle consumer build).
+6. MCP 2026-07-28 support (separate later milestone).
+
+Later or separate: `structuredContent` and `outputSchema` generation (object root is required in 2025-11-25, so scalar returns need wrapping); publishing to Maven Central; README roadmap checkboxes.
+
+---
+
+## 12. Open Items and Risks
+
+- Whether the M03 protocol version string and the `initialize` models match the 2025-11-25 target. Inspect before the dispatcher milestone.
+- Empty `content` in `CallToolResult` is unverified against the spec.
+- Gradle usage was verified only through a composite build. Published artifacts, POM scopes, and non-macOS hosts are unverified.
+- CI runs on `ubuntu-latest` only. Check the result of the 255-byte file-name test and the 5 s preemptive timeout test on CI. Add other operating systems to the matrix if needed.
+- The processor claims @Tool and @Arg (section 6). Processors that run after Maegae do not see these annotations.
+- A valid provider keeps its generated files when another provider in the same compilation is invalid. This is current behavior, not a specified contract.
+- Local classes are not discovered (section 6).
+- Cross-provider duplicate Tool names are not detected.
+- Stateless mode has no server-initiated requests (no progress, sampling, or elicitation). Document this when the runtime exists.
+- The README roadmap checkboxes were updated in T06 (agent-reported). Check them against reality.
 
 ---
 
@@ -377,16 +404,18 @@ Out of scope: registry, dispatcher, `CallToolResult` conversion, HTTP transport,
 5. Verify the full build before marking a task complete. Report actual status, not assumed status.
 6. Update the README support matrix when capabilities change.
 
-Coding agent prompts (English) include: objective, scope, architecture constraints, fixed decisions, implementation requirements, testing expectations, acceptance criteria, verification commands, and a completion report. Lessons from M04-T05:
-- Start the prompt with "Implement this task now. Do not summarize any previous task." An agent once answered with a summary of the previous task instead of implementing.
-- Ask the agent for evidence (file, test method, assertion) when reviewing its report, and do not accept counts alone.
+Coding agent prompts (English) include: objective, scope, architecture constraints, fixed decisions, implementation requirements, testing expectations, acceptance criteria, verification commands, and a completion report. Lessons from M04:
+- Start the prompt with "Implement this task now. Do not summarize any previous task." An agent once answered with a summary of the previous task instead of implementing (a usage limit was also involved).
+- Add "stop and report before changing a production contract". In T06 the agent changed the processor's claiming behavior on its own, and the user had to approve it afterward.
+- Ask the agent for evidence (file, test method, assertion) when reviewing its report. Do not accept counts alone.
 - Review reports for claims that were not verified, for tests that were silently dropped, and for tests that do not reach the code they claim to test (for example, the codec rejecting an input before the code under test sees it).
-- Use mutation checks on safety-critical code. Remove a check, run the tests, and require a failure. If a mutation survives, either add a test or document why the check is redundant.
+- Use mutation checks on safety-critical code. Remove a check, run the tests, and require a failure. If a mutation survives, add a test or document why the check is redundant. Require `git status` to show a clean tree afterward (an agent once stacked mutations because of a wrong restore path).
+- Real consumer builds find problems that a test harness hides (for example the `-Xlint` failure found in T06).
 - The agent sandbox can block Gradle writes to `~/.gradle`. The agent may need to run Gradle outside the sandbox.
 
 Testing policy — no AI slop. Do not add tests only for coverage. Avoid trivial assertions, redundant cases, excessive mocking, brittle implementation-detail tests, and tests that only check that a class exists. Prefer real compiler integration tests, generated-code execution tests, deterministic behavioral assertions, boundary and failure-path tests, and architecture regression tests.
 
-Git: the user works with feature branches, PRs, and merges. Do not force-push, reset, or discard commits. Do not push to main directly.
+Git: the user works with feature branches, PRs, and merges. Do not force-push, reset, or discard commits. Do not push to main directly. The agent does not push unless the user asks.
 
 ---
 
@@ -404,16 +433,16 @@ All tests and ArchUnit checks must pass. Do not weaken ArchUnit rules.
 
 ## 15. Instructions for the Next AI Assistant
 
-You are continuing development of Maegae. M01–M03 and M04-T01 to T05 are done. M04-T06 is next.
+You are continuing development of Maegae. M01–M03 and all of M04 are done. The runtime is not implemented.
 
-Before writing the T06 prompt:
-1. Confirm with the user that the T05 PR is merged and ask for the merge commit hash if it is not in section 10.
-2. Ask for the result of `grep -rn "2025-\|2026-" maegae-core/src` to learn the protocol version M03 selected. It was never reported.
-3. Ask the user for the repository layout of the T04/T05 generated files if exact names matter.
-4. Do not assume details marked "agent-reported" are exact.
+Before planning the runtime milestones:
+1. Ask the user for the results of `grep -rn "2025-\|2026-" maegae-core/src` and for the M03 `initialize` model summary. The protocol version M03 selected was never reported.
+2. Ask for the CI result of the T05 and T06 PRs, especially the Linux file-name test and the timeout test.
+3. Do not assume details marked "agent-reported" are exact. Inspect the repository or ask the user for evidence.
+4. Verify the empty-`content` question against the MCP 2025-11-25 specification before the dispatcher design.
 
-When the user asks for the T06 prompt, write it in English from section 11. It must start with "Implement this task now. Do not summarize any previous task." and include the Preflight, scope, fixed decisions, work items A–H, test rules, verification (build twice), acceptance criteria, and the completion report.
+Then discuss the runtime milestone decomposition with the user (section 11 is only a suggestion). Resolve only decisions that are essential to the first task. Write prompts in English. They must start with "Implement this task now. Do not summarize any previous task." and include Preflight, scope, fixed decisions, work items, test rules, verification, acceptance criteria, and a completion report.
 
-After T06, update this document and plan the runtime milestones from section 12. Confirm milestone numbering and task decomposition with the user before implementing. Do not claim runtime capabilities are complete until verified.
+Do not claim runtime capabilities are complete until verified. Update this document after each milestone.
 
-Current checkpoint: M04-T05 merged. M04-T06 next.
+Current checkpoint: M04 complete and merged. Runtime milestones not planned.
