@@ -44,7 +44,7 @@ public final class McpToolProcessor extends AbstractProcessor {
 
     @Override
     public Set<String> getSupportedAnnotationTypes() {
-        return Set.of("dev.nexcraft.maegae.annotation.Tool");
+        return Set.of("dev.nexcraft.maegae.annotation.Tool", "dev.nexcraft.maegae.annotation.Arg");
     }
 
     @Override
@@ -81,7 +81,9 @@ public final class McpToolProcessor extends AbstractProcessor {
                 }
             });
         }
-        return false;
+        // This processor owns both annotations. Claiming them avoids the [processing] lint warning
+        // "No processor claimed any of these annotations" under -Xlint:all.
+        return true;
     }
 
     private ToolDeclaration discover(final ExecutableElement method) {
