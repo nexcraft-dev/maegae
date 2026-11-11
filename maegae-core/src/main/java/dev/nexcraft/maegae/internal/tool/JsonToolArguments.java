@@ -165,6 +165,8 @@ public final class JsonToolArguments implements ToolArguments {
         final long precision = number.precision();
         final long integerDigits = precision - number.scale();
         // A non-zero value with no integer digit is fractional. The checks run before any exact conversion.
+        // The "integerDigits <= 0" check: on JDK 25 the result and time are the same without it.
+        // It stays as a guard that does not depend on JDK internals.
         if (integerDigits <= 0 || integerDigits > MAX_INTEGER_DIGITS || precision > MAX_INTEGER_DIGITS) {
             throw invalid(name, expectedType);
         }
@@ -184,6 +186,8 @@ public final class JsonToolArguments implements ToolArguments {
         if (number.signum() == 0) {
             return Magnitude.NORMAL;
         }
+        // This precheck: on JDK 25 the result and time are the same without it.
+        // It stays as a guard that does not depend on JDK internals.
         final long exponent = (long) number.precision() - number.scale() - 1;
         if (exponent > FLOATING_EXPONENT_LIMIT) {
             return Magnitude.OVERFLOW;

@@ -27,6 +27,14 @@ import java.util.Set;
  * Discovers and validates Tool declarations exposed by annotation processing.
  * Local and anonymous classes are outside the supported provider scope. Their Tool
  * annotations may not be discovered or rejected by {@link RoundEnvironment}.
+ *
+ * <p>This processor supports {@code Tool} and {@code Arg} and returns {@code true} from
+ * {@link #process}. javac then does not report "No processor claimed any of these annotations"
+ * under {@code -Xlint:all -Werror}. This reverses the T02 decision (Tool only, unclaimed). The T02 reason
+ * was that no processing existed. Processing exists now.</p>
+ *
+ * <p>Consequence: a processor that runs after this one does not see {@code @Tool} or {@code @Arg}
+ * on user classes. A processor that runs before this one does.</p>
  */
 public final class McpToolProcessor extends AbstractProcessor {
     private final Set<ExecutableElement> processed = new HashSet<>();
@@ -44,7 +52,7 @@ public final class McpToolProcessor extends AbstractProcessor {
 
     @Override
     public Set<String> getSupportedAnnotationTypes() {
-        return Set.of("dev.nexcraft.maegae.annotation.Tool");
+        return Set.of("dev.nexcraft.maegae.annotation.Tool", "dev.nexcraft.maegae.annotation.Arg");
     }
 
     @Override
@@ -81,7 +89,8 @@ public final class McpToolProcessor extends AbstractProcessor {
                 }
             });
         }
-        return false;
+        // Claims Tool and Arg. See the class Javadoc for the reason and the effect on other processors.
+        return true;
     }
 
     private ToolDeclaration discover(final ExecutableElement method) {

@@ -32,10 +32,10 @@ class McpToolProcessorTest {
     private static final String SERVICE = "META-INF/services/javax.annotation.processing.Processor";
 
     @Test
-    void declaresOnlyToolSupportAndTheExactJava25Contract() {
+    void declaresToolAndArgSupportAndTheExactJava25Contract() {
         final var processor = new McpToolProcessor();
 
-        assertEquals(Set.of(Tool.class.getCanonicalName()), processor.getSupportedAnnotationTypes());
+        assertEquals(Set.of(Tool.class.getCanonicalName(), "dev.nexcraft.maegae.annotation.Arg"), processor.getSupportedAnnotationTypes());
         assertEquals(SourceVersion.RELEASE_25, processor.getSupportedSourceVersion());
     }
 
@@ -57,7 +57,8 @@ class McpToolProcessorTest {
         final String invocation = trace.lines().filter(line -> line.startsWith("Processor " + PROVIDER + " "))
                 .findFirst().orElseThrow(() -> new AssertionError("Missing processor invocation trace: " + trace));
         assertTrue(invocation.contains(Tool.class.getCanonicalName()), trace);
-        assertTrue(invocation.contains("returns false"), trace);
+        // The processor claims its annotations, so -Xlint:processing does not warn about unclaimed annotations.
+        assertTrue(invocation.contains("returns true"), trace);
         assertTrue(trace.contains("last round: true"), trace);
     }
 
