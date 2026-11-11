@@ -46,6 +46,27 @@ Duplicate object properties and malformed JSON are rejected. Input and nesting l
 - **Minimal Dependencies** — No application framework required.
 - **Configurable Execution** — Tool timeouts and optional concurrency limits.
 
+## Using Maegae in a Gradle project (preview)
+
+Nothing is published yet. The coordinates and versions below are provisional.
+
+JDK 25 is required.
+
+Recommended declarations (Gradle Kotlin DSL):
+
+```kotlin
+dependencies {
+    annotationProcessor("dev.nexcraft.maegae:maegae-processor:<version>")
+    implementation("dev.nexcraft.maegae:maegae-core:<version>")
+}
+```
+
+- Core is needed because the annotations (`@Tool`, `@Arg`) and the generated code use core types.
+- `compileOnly` on core also compiles, but the generated adapters then have no core at runtime.
+- `annotationProcessor` alone fails to compile, because the annotations are not on the compile classpath.
+
+These declarations were verified through a Gradle composite build only. Published artifacts were not verified.
+
 ## Planned Quick Start
 
 > The following API represents the planned Maegae v1 developer experience. It is not yet available as a published release.
@@ -204,6 +225,7 @@ Argument errors report only the argument name and the expected type. They never 
 - Duplicate Tool names across different provider classes are not detected. Each provider is generated on its own. The Tool registry will check this.
 - `structuredContent` and `outputSchema` are not generated. A Tool result is one text value.
 - POJOs, records, collections, arrays, maps, enums, `Optional`, `char`, and parameterized types are not supported as parameters or return values.
+- Maegae claims `@Tool` and `@Arg`, so processors that run after it do not see these annotations.
 - The generated adapter does not convert exceptions. An argument error (`ToolArgumentException`) and an exception from the Tool method stay distinguishable. A future dispatcher will map them to MCP results.
 
 ### Resources
