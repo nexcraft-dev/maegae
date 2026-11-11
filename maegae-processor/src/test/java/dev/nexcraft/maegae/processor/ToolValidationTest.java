@@ -40,7 +40,7 @@ class ToolValidationTest {
         final var result = compile(output, IMPORTS + """
                 class ExampleTools {
                     @Tool public int add(int a, int b) throws java.io.IOException { return a + b; }
-                    @Tool(name = "explicit.name") public void other(@Arg(name = "some key", required = false) int a) {}
+                    @Tool(name = "explicit.name") public void other(@Arg(name = "some key", required = false) Integer a) {}
                     @Tool(name = "unicode 이름") public void named(@Arg(description = "value") String value) {}
                     static class Nested {
                         @Tool public void nested() {}
@@ -53,7 +53,7 @@ class ToolValidationTest {
         assertTrue(result.success(), result.diagnostics().toString());
         assertTrue(result.diagnostics().isEmpty(), result.diagnostics().toString());
         try (final var generated = Files.walk(output.resolve("generated"))) {
-            assertEquals(3, generated.filter(Files::isRegularFile).count());
+            assertEquals(6, generated.filter(Files::isRegularFile).count());
         }
     }
 

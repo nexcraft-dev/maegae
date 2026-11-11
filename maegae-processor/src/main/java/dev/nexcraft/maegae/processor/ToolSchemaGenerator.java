@@ -1,9 +1,6 @@
 package dev.nexcraft.maegae.processor;
 
 import javax.annotation.processing.Messager;
-import javax.lang.model.element.TypeElement;
-import javax.lang.model.type.DeclaredType;
-import javax.lang.model.type.TypeMirror;
 import javax.tools.Diagnostic;
 import java.util.ArrayList;
 import java.util.List;
@@ -21,7 +18,7 @@ final class ToolSchemaGenerator {
         final List<String> types = new ArrayList<>();
         boolean supported = true;
         for (final ArgumentDeclaration argument : tool.arguments()) {
-            final String type = schemaType(argument.type());
+            final String type = ToolType.of(argument.type()).map(ToolType::jsonType).orElse(null);
             if (type == null) {
                 messager.printMessage(Diagnostic.Kind.ERROR,
                         "Unsupported MCP Tool argument type '" + argument.type() + "' for parameter '"
@@ -32,30 +29,6 @@ final class ToolSchemaGenerator {
             types.add(type);
         }
         return supported ? Optional.of(renderSchema(tool.arguments(), types)) : Optional.empty();
-    }
-
-    private String schemaType(final TypeMirror type) {
-        return switch (type.getKind()) {
-            case BOOLEAN -> "boolean";
-            case BYTE, SHORT, INT, LONG -> "integer";
-            case FLOAT, DOUBLE -> "number";
-            case DECLARED -> declaredType((DeclaredType) type);
-            default -> null;
-        };
-    }
-
-    private String declaredType(final DeclaredType type) {
-        if (!type.getTypeArguments().isEmpty() || !(type.asElement() instanceof TypeElement element)) {
-            return null;
-        }
-        return switch (element.getQualifiedName().toString()) {
-            case "java.lang.String" -> "string";
-            case "java.lang.Boolean" -> "boolean";
-            case "java.lang.Byte", "java.lang.Short", "java.lang.Integer", "java.lang.Long",
-                 "java.math.BigInteger" -> "integer";
-            case "java.lang.Float", "java.lang.Double", "java.math.BigDecimal" -> "number";
-            default -> null;
-        };
     }
 
     private String renderSchema(final List<ArgumentDeclaration> arguments, final List<String> types) {
