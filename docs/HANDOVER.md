@@ -1,9 +1,9 @@
 # Maegae — Project Handover
 
-Last Updated: 2026-11-11
+Last Updated: 2026-11-13
 Project: Maegae
-Status: Milestone M04 (Tool Annotation & Metadata) is complete and merged into main. The runtime is not implemented.
-Next Task: Plan the runtime milestones (section 11). Nothing is decomposed or approved yet.
+Status: Milestones M01–M05 are complete and merged into main. The server runtime (dispatcher, execution, transport, public API) is not implemented.
+Next Task: M06 — MCP dispatcher. Not planned in detail yet (section 11).
 
 ---
 
@@ -72,6 +72,7 @@ The runtime (registry, dispatcher, transport, public server API) is NOT implemen
 | Annotation Processing | Java Annotation Processing API |
 | Testing | JUnit Jupiter 6, ArchUnit |
 | CI | GitHub Actions, `ubuntu-latest` only (agent-reported) |
+| Native build | GraalVM native-image is a REQUIREMENT (user decision). Local runs use GraalVM CE for JDK 25 installed with sdkman. |
 | License | Apache License 2.0 |
 | Base Package | dev.nexcraft.maegae |
 
@@ -79,10 +80,11 @@ Decisions:
 1. Use Java 25 features where appropriate.
 2. No Spring Boot or other heavy framework.
 3. Jackson stays inside the JSON implementation. No Jackson Databind.
-4. No runtime reflection for Tool discovery and invocation.
+4. Maegae never uses reflection to find or call Tool methods. Binding discovery uses java.util.ServiceLoader (the JDK may use reflection internally; GraalVM native-image supports it). See section 9a.
 5. The MCP core is independent of Netty.
 6. Prefer compile-time validation and generated adapters.
 7. Keep the public API small. Avoid unnecessary abstractions and dependencies.
+8. The framework must work in a GraalVM native image. Do not claim general native-image support until it is verified for the full runtime (section 9a lists what was verified).
 
 ---
 
@@ -94,13 +96,15 @@ maegae/
 ├── maegae-processor/
 ├── maegae-transport-netty/
 ├── maegae-example/
+├── maegae-native-smoke/
 └── build.gradle / settings.gradle
 ```
 
-- **maegae-core**: JSON foundation, JSON-RPC models and parsing, MCP protocol models, Tool contracts and runtime metadata, transport-independent logic. Must not depend on Netty. Agent-reported dependencies seen through Gradle: jackson-core 3.2.2 and slf4j-api 2.0.20.
+- **maegae-core**: JSON foundation, JSON-RPC models and parsing, MCP protocol models, Tool contracts and runtime metadata, transport-independent logic. Must not depend on Netty. Agent-reported dependencies seen through Gradle: jackson-core 3.2.2 and slf4j-api 2.0.20. It also contains the package `dev.nexcraft.maegae.runtime` (Tool registry, later the dispatcher). See section 9a.
 - **maegae-processor**: @Tool/@Arg processing, validation, metadata and JSON Schema generation, invocation adapter generation. The processor class name is `McpToolProcessor`. Do not rename it. It declares `implementation(project(":maegae-core"))`.
 - **maegae-transport-netty**: Netty Streamable HTTP transport. Netty details stay isolated from core.
 - **maegae-example**: not built yet. Not a priority until the runtime works.
+- **maegae-native-smoke**: test-only, not published, not part of `build` or `check`. Task `:maegae-native-smoke:nativeSmokeTest`. See section 9a.
 
 ---
 
@@ -122,10 +126,15 @@ Reasons: M03 built `initialize` models. The 2026-07-28 changes (below) are dispa
 - Tool error semantics are the same in both versions (see section 9). SEP-1303 (2025-11-25) moved input validation errors from protocol errors to Tool execution errors (`isError: true`).
 - Many SDKs and servers serve 2026-07-28 natively and fall back to 2025-era behavior. Fallback behavior of each real client was NOT verified. Verify interoperability in the runtime milestone.
 
-### Not verified
+### Resolved on 2026-11-13
 
-- The protocol version string that M03 actually selected. The user never reported the result of `grep -rn "2025-\|2026-" maegae-core/src`. Inspect M03 before the runtime milestone.
-- Whether the spec allows an empty `content` array in `CallToolResult`. The generated adapters map void and null returns to an empty `ToolOutput`. Verify before the dispatcher is built.
+- M03 selected 2025-11-25. The user ran `grep -rn "2025-\|2026-" maegae-core/src`. The Javadoc and tests of InitializeParams, InitializeResult, ClientCapabilities and ImplementationInfo name 2025-11-25. `ProtocolVersion` is a value type that validates the date format. It accepts valid dates such as 2024-11-05 and 2099-12-31 and rejects malformed or impossible dates. No supported-version list and no latest-version constant exist in main code. Version negotiation and the list of supported versions are dispatcher work.
+- Empty `content` array in `CallToolResult`: the 2025-11-25 schema (a third-party mirror, not the official file) requires `content` and sets no minimum length. An empty array is valid. Void and null returns map to an empty `ToolOutput`. The dispatcher should send `content: []`.
+
+### Still not verified
+
+- Whether the M03 models match the 2025-11-25 schema field by field. As far as the assistant knows, 2025-11-25 added `icons` and `websiteUrl` to `Implementation`. `ImplementationInfo` documents only `title` and `description`. Unverified.
+- `ToolDefinition` has no `title`, `annotations`, or `outputSchema`. This is fine for v1. Record it.
 
 ### Transport design (v1)
 
@@ -206,6 +215,7 @@ Agent-reported state:
 - Long schema strings are split into 8192-character chunks (`STRING_CHUNK_LENGTH`).
 - If any declaration fails, no file is generated.
 - Processor classes: `ToolDeclaration` and `ArgumentDeclaration` (package-private records), `ToolSchemaGenerator`, `ToolMetadataGenerator` (renderer), `ToolGenerator` (writes both files together), `ToolInvokerGenerator`, `ToolType`, `JavaSourceText`, `GeneratedNames`.
+- Since M05-T01 a third class, `MaegaeToolBinding_<suffix>`, is generated for each provider. See section 9a.
 
 Type mapping (schema and conversion share `ToolType`):
 
@@ -317,6 +327,63 @@ Supported return types: void; String; boolean, byte, short, int, long, float, do
 
 ---
 
+## 9a. Tool Discovery and Registry (M05)
+
+### Discovery design (decided 2026-11-13)
+
+Goal: `tools(new CalculatorTools())` keeps working, the framework works in a GraalVM native image, and Maegae never uses reflection to find or call Tool methods.
+
+Options compared:
+- **A**: compute the generated class name at run time and use `Class.forName` plus `Method.invoke`. Rejected. It needs native-image reflection metadata, because computed names are not visible to static analysis. The metadata format also changes between GraalVM versions.
+- **B**: the processor generates a binding class per provider and one service file. The runtime uses `ServiceLoader`. **Chosen.**
+- **C**: generated, readable binding classes that the developer calls directly: `tools(CalculatorToolsBinding.of(new CalculatorTools()))`. No reflection at all, but the target API changes. Kept as a fallback. It is additive, because the static generated classes already exist.
+
+Why some reflection is unavoidable when the framework finds generated classes itself: core is compiled before user code exists, so it cannot name generated classes. Any lookup by name at run time is reflection. `ServiceLoader` uses reflection inside the JDK, and GraalVM native-image supports it.
+
+### Generated artifacts per provider (agent-reported)
+
+- `MaegaeToolMetadata_<sha256>` (T04), `MaegaeToolInvokers_<sha256>` (T05), `MaegaeToolBinding_<sha256>` (M05-T01). All are in the provider's package. All three are generated, or none.
+- The binding implements `ToolProviderBinding` (package `dev.nexcraft.maegae.protocol.mcp`, in core): `Class<?> providerType()`, `List<ToolDefinition> tools()`, `Map<String, ToolInvoker> invokers(Object provider)`. It has a public no-argument constructor, because ServiceLoader requires one. `invokers` throws NullPointerException for null and IllegalArgumentException for a provider of the wrong type.
+- The SPI is in `protocol.mcp`, not in `tool`. A dependency `tool -> protocol` creates the cycle `internal -> tool -> protocol -> internal` under the ArchUnit cycle rule (see below). The first plan put it in `tool`; the agent stopped at the failing ArchUnit test and did not weaken the rule.
+- One service file, `META-INF/services/dev.nexcraft.maegae.protocol.mcp.ToolProviderBinding`, is written once in the last processing round. It is sorted, lists only providers whose three classes were generated, and is not written if an error was raised. A pre-existing resource with the same name is a compile error (no merging).
+- The processor is declared **aggregating** in `META-INF/gradle/incremental.annotation.processors`. The cost is that Gradle reprocesses all annotated classes when one changes. A scratch Gradle consumer (composite build) showed correct service-file content after an edit and after deleting a provider. It was NOT confirmed from the logs that Gradle ran incrementally.
+
+### Runtime registry (M05-T02, package `dev.nexcraft.maegae.runtime` in core)
+
+```java
+public final class ToolRegistry {
+    public static ToolRegistry of(Collection<?> providers);   // ServiceLoader.load(ToolProviderBinding.class)
+    public List<ToolDefinition> tools();                      // immutable, sorted by name (String.compareTo)
+    public Optional<ToolInvoker> find(String name);
+}
+```
+
+- A package-private `create(Iterable<ToolProviderBinding>, Collection<?>)` exists for tests with fake bindings.
+- Provider match is exact: `providerType()` equals `provider.getClass()`. Subclasses and anonymous classes are not supported.
+- The registry is immutable and thread-safe by construction. Provider instances may be called by many threads at once. Their thread safety is the developer's job.
+- Errors (agent-reported): missing binding (IllegalStateException, names the class, says to add maegae-processor to annotationProcessor); two bindings for one type (IllegalStateException, names both bindings); Tool names differ from invoker names (IllegalStateException, lists the differences); duplicate Tool name across providers (IllegalArgumentException, `Duplicate Tool name 'x' in providers <A>, <B>.`, also for the same class or instance registered twice); null input (NullPointerException).
+- Classes in `runtime` are public but internal to Maegae. No stability guarantee. Do not put a registry-like class in `internal`.
+- Mutation checks (agent-reported): removing the names-equal-keys check, the duplicate check, the sort, or using `isInstance` instead of exact class equality each made tests fail. No mutation survived.
+
+### ArchUnit facts (agent-reported, `CoreArchitectureRules` in maegae-core)
+
+- `NO_PACKAGE_CYCLES` uses the first-level package under `dev.nexcraft.maegae` as the slice. `internal`, `internal.json` and `internal.tool` are one slice. Classes directly in the base package form `<bootstrap>`. `protocol` already depends on `internal`, so a class in `internal` that uses `protocol` creates a cycle. This is why `runtime` is a top-level package and not in `internal`.
+- `CORE_INDEPENDENCE`: core must not use processor, transport.netty, example, io.netty.
+- `TRANSPORT_INDEPENDENCE`: an allow-list for classes in `transport..`: JDK plus annotation, protocol, tool, transport, base package. **`runtime` is not on it.** The Netty transport therefore cannot use the registry or the dispatcher directly. Design M06 so that a small interface lives in `transport` and the dispatcher (in `runtime`) implements it. Do not edit the rule to get around this without an explicit decision.
+- `ANNOTATION_INDEPENDENCE`, `INTERNAL_ENCAPSULATION`.
+- Added in M05-T02: `RUNTIME_WITHOUT_REFLECTION`, `RUNTIME_WITHOUT_CLASS_FOR_NAME`, `RUNTIME_IS_NOT_USED` (nothing outside `runtime` may depend on it).
+
+### Native-image smoke test (M05-T03, extended in M05-T02)
+
+- Module `maegae-native-smoke`: test-only, not published, not part of `build` or `check`. The task `:maegae-native-smoke:nativeSmokeTest` runs the app on the JVM, builds a native image with `native-image` (flags `--no-fallback` and `--exact-reachability-metadata`), runs it, and fails if the two outputs differ. The GraalVM home comes from `-PgraalvmHome`, then `GRAALVM_HOME`, then `JAVA_HOME`. No hand-written native-image configuration exists. Do not add any, because it would hide problems.
+- `--no-fallback` is deprecated and has no effect in this GraalVM version (agent-reported). It was kept.
+- The app builds `ToolRegistry.of(...)` over three providers (top-level, nested, generic), lists the tools, runs Tool calls, and checks the duplicate-name error. JVM output and native output were identical.
+- Results: local run on macOS arm64 with GraalVM CE for JDK 25 from sdkman (agent-reported), image about 12.3 MiB, build 24 to 34 seconds. CI: the workflow `.github/workflows/native-smoke.yml` passed on `ubuntu-latest` with `graalvm-community` and Java 25 (user-reported) for the T03 PR. CI result for the M05-T02 PR (registry path): build and native-smoke passed (user-reported, not checked by the assistant or the agent).
+- Negative control: without the service file, the native image failed with a `MissingResourceRegistrationError` (the exact-metadata mode tracks the service file as a resource). The registry-path negative control was run on the JVM only, where the registry throws the "No Tool binding found" error. It was not repeated in native mode.
+- Verified scope: ServiceLoader discovery and Tool execution in the smoke app. **Not covered: Netty, virtual threads, SLF4J, other operating systems, other GraalVM versions.** The README says this is not general native-image support. Keep it so.
+
+---
+
 ## 10. Milestone Progress
 
 | Milestone | Status |
@@ -331,15 +398,20 @@ Supported return types: void; String; boolean, byte, short, int, long, float, do
 | M04-T04 Metadata & JSON Schema | Complete, merged |
 | M04-T05 Invocation Adapter Generation | Complete, merged (user-reported). PR #20, merge commit a25372b |
 | M04-T06 Integration & Hardening | Complete, merged (user-reported). PR #22, merge commit d1239b5 |
-| Runtime milestones | Not planned yet |
+| M05-T01 Tool binding generation | Complete, merged (user-reported). PR #24, merge commit 38f8ba3 |
+| M05-T03 Native-image smoke test | Complete, merged (user-reported). PR #25, merge commit e889f49 |
+| M05-T02 Tool registry | Complete, merged (user-reported). PR #27, merge commit 311f87a |
+| M06–M10 | Agreed at milestone level only (section 11) |
 
 Commits on the feature branches (agent-reported; the merge method may have changed these hashes):
 - T05: `c629cb4` (hash-based class names), `4e070af` (adapter generation), `a17a557` (test hardening).
 - T06: `cf73f0a` (processor claims Tool and Arg), `3cf1f05` (end-to-end pipeline tests and README), `da4d12d` (annotation-claiming documentation and Gradle usage in README).
 
-Test counts at the end of T06, before the follow-up commit (agent-reported): core 382, processor 96, netty 35, no failures or skips. The CI result of the T05 and T06 PRs was not reported to the assistant.
+Test counts after M05-T02 (agent-reported): core 402, processor 112, netty 35, no failures or skips. Use the numbers from the clean build that you ran for this edit if they differ.
 
 M04 was planned with seven tasks. The metadata and schema tasks were merged into one, so M04 has six.
+
+M05 order was T01, T03, T02. T03 (native smoke test) was done before the registry on purpose: if ServiceLoader had failed in a native image, the design would have changed to option C (section 9a).
 
 ### T06 results (agent-reported)
 
@@ -365,16 +437,25 @@ Gradle resolves the processor's runtime variant, so core reaches the annotation 
 
 ---
 
-## 11. Next Step — Runtime Milestones (not planned yet)
+## 11. Next Step — Server Runtime Milestones
 
-The user has not approved any decomposition. The numbering and the task split must be agreed before any prompt is written. A suggested order from the assistant, for discussion only:
+Agreed decomposition (2026-11-13). The task split inside each milestone is not planned yet.
 
-1. Tool registry: register generated adapters with provider instances, detect duplicate Tool names across providers, expose `ToolDefinition` lists. Decide how the runtime finds generated classes without reflection (for example `ServiceLoader`; this needs public classes and public constructors).
-2. MCP dispatcher in core: `initialize`, version negotiation, `tools/list`, `tools/call`, JSON-RPC error semantics, no response to valid notifications, mapping of failures per section 9, conversion of `ToolOutput` to `CallToolResult`. Verify the empty-`content` question and the M03 version string first.
-3. Tool execution: virtual threads, configurable timeouts (a timeout may not interrupt blocking code), optional concurrency limits.
-4. Netty Streamable HTTP transport: stateless, `/mcp`, Origin validation, request limits.
-5. Public server API (`Maegae.server()...listen()`), `maegae-example`, real MCP client interoperability (including a real Gradle consumer build).
-6. MCP 2026-07-28 support (separate later milestone).
+| Milestone | Content |
+|---|---|
+| M06 | Dispatcher: `initialize`, version negotiation, `tools/list`, `tools/call`, error mapping per section 9, conversion of `ToolOutput` to `CallToolResult` |
+| M07 | Execution: virtual threads, timeouts, concurrency limits |
+| M08 | Netty stateless Streamable HTTP transport |
+| M09 | Public API (`Maegae.server()...listen()`), example module, real MCP client interoperability, native-image smoke test extended to Netty, virtual threads and SLF4J |
+| M10 | MCP 2026-07-28 support |
+
+M06 design notes:
+- The dispatcher lives in `dev.nexcraft.maegae.runtime`. Because `TRANSPORT_INDEPENDENCE` does not allow `transport` classes to use `runtime` (section 9a), define a small interface in `transport` that the dispatcher implements. Do not edit the rule to get around this without an explicit decision.
+- Send `content: []` for void and null returns (section 4).
+- The input schema in `ToolDefinition` is a JSON string. Insert it into `tools/list` as a JSON object, not as a string.
+- Keep the list of negotiable protocol versions configurable. v1 baseline is 2025-11-25.
+- Check the `ImplementationInfo` fields against the 2025-11-25 schema (section 4, "Still not verified").
+- `ToolArgumentException` and Tool exceptions map to Tool execution errors, and unknown Tool names and malformed `tools/call` structures map to JSON-RPC -32602 (section 9).
 
 Later or separate: `structuredContent` and `outputSchema` generation (object root is required in 2025-11-25, so scalar returns need wrapping); publishing to Maven Central; README roadmap checkboxes.
 
@@ -382,16 +463,18 @@ Later or separate: `structuredContent` and `outputSchema` generation (object roo
 
 ## 12. Open Items and Risks
 
-- Whether the M03 protocol version string and the `initialize` models match the 2025-11-25 target. Inspect before the dispatcher milestone.
-- Empty `content` in `CallToolResult` is unverified against the spec.
-- Gradle usage was verified only through a composite build. Published artifacts, POM scopes, and non-macOS hosts are unverified.
-- CI runs on `ubuntu-latest` only. Check the result of the 255-byte file-name test and the 5 s preemptive timeout test on CI. Add other operating systems to the matrix if needed.
+- Native-image support is verified only for the smoke app (section 9a). Netty 4.2, virtual threads, SLF4J, other operating systems and other GraalVM versions are not verified. Check them in M09. The README must keep saying this is not general native-image support.
+- The registry-path negative control was run on the JVM only, not in native mode.
+- `--no-fallback` has no effect in the current GraalVM version (deprecated). Consider removing it later.
+- The README names GraalVM versions in two forms (`native-image 25.0.4.1.1` and `GraalVM CE 25.4.4.1.1+1.1` appear in agent reports). Check that the README states the right one. Low priority.
+- The aggregating processor reprocesses all annotated classes when one changes. It was not confirmed from logs that Gradle ran incrementally.
+- Gradle usage was verified only through a composite build (scratch project). Published artifacts, POM scopes and non-macOS hosts are not verified. Coordinates in the README are provisional.
 - The processor claims @Tool and @Arg (section 6). Processors that run after Maegae do not see these annotations.
 - A valid provider keeps its generated files when another provider in the same compilation is invalid. This is current behavior, not a specified contract.
-- Local classes are not discovered (section 6).
-- Cross-provider duplicate Tool names are not detected.
+- Local classes are not discovered (section 6). Cross-provider duplicate Tool names are detected only by the runtime registry, not at compile time.
+- Provider match is exact. Subclasses, anonymous classes and JPMS (`provides` in module-info) are not supported or must be written by hand.
 - Stateless mode has no server-initiated requests (no progress, sampling, or elicitation). Document this when the runtime exists.
-- The README roadmap checkboxes were updated in T06 (agent-reported). Check them against reality.
+- Unverified M03 details: section 4, "Still not verified".
 
 ---
 
@@ -404,7 +487,7 @@ Later or separate: `structuredContent` and `outputSchema` generation (object roo
 5. Verify the full build before marking a task complete. Report actual status, not assumed status.
 6. Update the README support matrix when capabilities change.
 
-Coding agent prompts (English) include: objective, scope, architecture constraints, fixed decisions, implementation requirements, testing expectations, acceptance criteria, verification commands, and a completion report. Lessons from M04:
+Coding agent prompts (English) include: objective, scope, architecture constraints, fixed decisions, implementation requirements, testing expectations, acceptance criteria, verification commands, and a completion report. Lessons from M04 and M05:
 - Start the prompt with "Implement this task now. Do not summarize any previous task." An agent once answered with a summary of the previous task instead of implementing (a usage limit was also involved).
 - Add "stop and report before changing a production contract". In T06 the agent changed the processor's claiming behavior on its own, and the user had to approve it afterward.
 - Ask the agent for evidence (file, test method, assertion) when reviewing its report. Do not accept counts alone.
@@ -412,6 +495,11 @@ Coding agent prompts (English) include: objective, scope, architecture constrain
 - Use mutation checks on safety-critical code. Remove a check, run the tests, and require a failure. If a mutation survives, add a test or document why the check is redundant. Require `git status` to show a clean tree afterward (an agent once stacked mutations because of a wrong restore path).
 - Real consumer builds find problems that a test harness hides (for example the `-Xlint` failure found in T06).
 - The agent sandbox can block Gradle writes to `~/.gradle`. The agent may need to run Gradle outside the sandbox.
+- Start every task in a new agent session. Twice an agent that kept an old context answered with the report of the previous task and did not implement the new one. If a report has no files, commits or tests of the new task, the task was not done.
+- The agent sandbox may block `git fetch` and `git pull` (github.com:22). The owner must check that the branch is based on the current `origin/main`.
+- Before choosing a package for new code, read the ArchUnit rules. Two M05 decisions (the SPI package and the registry package) were wrong because the rules were not read first. The Preflight now asks the agent to read the rules, and it must stop and report instead of weakening a rule.
+- A native-image smoke test with no hand-written configuration and a negative control (remove the service file, expect failure) gives real evidence. Do the riskiest design check first (M05-T03 before M05-T02).
+- Write README sentences as facts only. Do not describe who reported or who ran a check.
 
 Testing policy — no AI slop. Do not add tests only for coverage. Avoid trivial assertions, redundant cases, excessive mocking, brittle implementation-detail tests, and tests that only check that a class exists. Prefer real compiler integration tests, generated-code execution tests, deterministic behavioral assertions, boundary and failure-path tests, and architecture regression tests.
 
@@ -433,16 +521,15 @@ All tests and ArchUnit checks must pass. Do not weaken ArchUnit rules.
 
 ## 15. Instructions for the Next AI Assistant
 
-You are continuing development of Maegae. M01–M03 and all of M04 are done. The runtime is not implemented.
+You are continuing development of Maegae. M01 to M05 are done and merged. The server runtime is not implemented.
 
-Before planning the runtime milestones:
-1. Ask the user for the results of `grep -rn "2025-\|2026-" maegae-core/src` and for the M03 `initialize` model summary. The protocol version M03 selected was never reported.
-2. Ask for the CI result of the T05 and T06 PRs, especially the Linux file-name test and the timeout test.
-3. Do not assume details marked "agent-reported" are exact. Inspect the repository or ask the user for evidence.
-4. Verify the empty-`content` question against the MCP 2025-11-25 specification before the dispatcher design.
+Before you plan M06:
+1. Do not assume details marked "agent-reported" are exact. Inspect the repository or ask the user for evidence.
+2. Read the ArchUnit rules in maegae-core (`CoreArchitectureRules`) before choosing packages for new code. Section 9a lists the known rules.
+3. Verify the points in section 4, "Still not verified", before the dispatcher design.
 
-Then discuss the runtime milestone decomposition with the user (section 11 is only a suggestion). Resolve only decisions that are essential to the first task. Write prompts in English. They must start with "Implement this task now. Do not summarize any previous task." and include Preflight, scope, fixed decisions, work items, test rules, verification, acceptance criteria, and a completion report.
+Then discuss the M06 task split with the user. Section 11 gives the agreed milestone list and design notes. Resolve only the decisions that are essential for the first task. Write coding-agent prompts in English. They must start with "Implement this task now. Do not summarize any previous task." and include Preflight, scope, fixed decisions, work items, test rules, verification, acceptance criteria and a completion report. Tell the agent to stop and report before it changes a production contract or an ArchUnit rule.
 
-Do not claim runtime capabilities are complete until verified. Update this document after each milestone.
+Do not claim runtime capabilities are complete until verified. Do not claim native-image support beyond section 9a. Update this document after each milestone.
 
-Current checkpoint: M04 complete and merged. Runtime milestones not planned.
+Current checkpoint: M05 complete and merged. M06 is next.
