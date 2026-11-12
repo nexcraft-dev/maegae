@@ -4,23 +4,19 @@ import dev.nexcraft.maegae.internal.json.JacksonJsonCodec;
 import dev.nexcraft.maegae.internal.json.JsonObject;
 import dev.nexcraft.maegae.internal.tool.JsonToolArguments;
 import dev.nexcraft.maegae.protocol.mcp.ToolDefinition;
-import dev.nexcraft.maegae.protocol.mcp.ToolProviderBinding;
+import dev.nexcraft.maegae.runtime.ToolRegistry;
 import dev.nexcraft.maegae.tool.ToolArgumentException;
-import dev.nexcraft.maegae.tool.ToolInvoker;
 
-import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
-import java.util.Map;
-import java.util.ServiceLoader;
 
 /**
- * Smoke test of binding discovery and Tool execution. The output is the same on the JVM and in a native image.
- * Providers are created with plain {@code new}. Nothing in this class uses reflection.
+ * Smoke test of the Tool registry: binding discovery and Tool execution. The output is the same on the JVM and in a
+ * native image. Providers are created with plain {@code new}. Nothing in this class uses reflection or
+ * {@code ServiceLoader} directly.
  */
 public final class SmokeMain {
-    private static final List<String> EXPECTED_PROVIDERS =
-            List.of("smoke.Box", "smoke.CalculatorTools", "smoke.Providers$Greeter");
+    private static final List<String> EXPECTED_TOOLS =
+            List.of("add", "boom", "describe", "greet", "kind", "subtract");
     private static final JacksonJsonCodec CODEC = new JacksonJsonCodec();
     private static boolean failed;
 
@@ -28,61 +24,54 @@ public final class SmokeMain {
     }
 
     public static void main(final String[] args) {
-        final List<ToolProviderBinding> bindings = new ArrayList<>();
+        final ToolRegistry[] holder = new ToolRegistry[1];
         step(1, () -> {
-            ServiceLoader.load(ToolProviderBinding.class).forEach(bindings::add);
-            bindings.sort(Comparator.comparing(binding -> binding.providerType().getName()));
-            final List<String> names = bindings.stream().map(binding -> binding.providerType().getName()).toList();
-            System.out.println("STEP 1 bindings=" + bindings.size() + " providers=" + names);
-            expect(1, "providers", EXPECTED_PROVIDERS.toString(), names.toString());
+            holder[0] = ToolRegistry.of(List.of(new Box<Integer>(), new CalculatorTools(), new Providers.Greeter()));
+            final List<String> names = holder[0].tools().stream().map(ToolDefinition::name).toList();
+            System.out.println("STEP 1 tools=" + names.size() + " names=" + names);
+            expect(1, "tools", EXPECTED_TOOLS.toString(), names.toString());
         });
         step(2, () -> {
-            for (final ToolProviderBinding binding : bindings) {
-                System.out.println("STEP 2 " + binding.providerType().getName() + " tools="
-                        + binding.tools().stream().map(ToolDefinition::name).toList());
-                for (final ToolDefinition tool : binding.tools()) {
-                    System.out.println("STEP 2   schema " + tool.name() + " " + tool.inputSchemaJson());
-                }
+            for (final ToolDefinition tool : holder[0].tools()) {
+                System.out.println("STEP 2 schema " + tool.name() + " " + tool.inputSchemaJson());
             }
         });
         step(3, () -> {
-            final List<Object> providers = List.of(new Box<Integer>(), new CalculatorTools(), new Providers.Greeter());
-            for (final Object provider : providers) {
-                final ToolProviderBinding binding = bindings.stream()
-                        .filter(candidate -> candidate.providerType() == provider.getClass()).findFirst()
-                        .orElseThrow(() -> new IllegalStateException("No binding for " + provider.getClass().getName()));
-                run(provider.getClass().getName(), binding.invokers(provider));
+            final ToolRegistry registry = holder[0];
+            check(registry, "add", "{\"a\":2,\"b\":40}", "text 42");
+            check(registry, "add", "{\"a\":1.0,\"b\":1}", "text 2");
+            check(registry, "add", "{\"a\":1.5,\"b\":1}", "ToolArgumentException argument=a");
+            check(registry, "add", "{\"b\":1}", "ToolArgumentException argument=a");
+            check(registry, "subtract", "{\"a\":50,\"b\":8}", "text 42");
+            check(registry, "describe", "{}", "text label=null");
+            check(registry, "describe", "{\"label\":null}", "text label=null");
+            check(registry, "describe", "{\"label\":\"x\"}", "text label=x");
+            check(registry, "boom", "{}", "IllegalStateException message=boom");
+            check(registry, "greet", "{\"name\":\"Maegae\"}", "text Hello, Maegae");
+            check(registry, "kind", "{}", "text box");
+        });
+        step(4, () -> {
+            String actual;
+            try {
+                ToolRegistry.of(List.of(new CalculatorTools(), new CalculatorTools()));
+                actual = "no exception";
+            } catch (IllegalArgumentException exception) {
+                actual = exception.getClass().getName() + ": " + exception.getMessage();
             }
+            System.out.println("STEP 4 duplicate -> " + actual);
+            expect(4, "duplicate", "java.lang.IllegalArgumentException: Duplicate Tool name 'add' in providers "
+                    + "smoke.CalculatorTools, smoke.CalculatorTools.", actual);
         });
         System.out.println(failed ? "RESULT FAIL" : "RESULT OK");
         System.exit(failed ? 1 : 0);
     }
 
-    private static void run(final String provider, final Map<String, ToolInvoker> invokers) {
-        switch (provider) {
-            case "smoke.CalculatorTools" -> {
-                check(invokers, "add", "{\"a\":2,\"b\":40}", "text 42");
-                check(invokers, "add", "{\"a\":1.0,\"b\":1}", "text 2");
-                check(invokers, "add", "{\"a\":1.5,\"b\":1}", "ToolArgumentException argument=a");
-                check(invokers, "add", "{\"b\":1}", "ToolArgumentException argument=a");
-                check(invokers, "subtract", "{\"a\":50,\"b\":8}", "text 42");
-                check(invokers, "describe", "{}", "text label=null");
-                check(invokers, "describe", "{\"label\":null}", "text label=null");
-                check(invokers, "describe", "{\"label\":\"x\"}", "text label=x");
-                check(invokers, "boom", "{}", "IllegalStateException message=boom");
-            }
-            case "smoke.Providers$Greeter" -> check(invokers, "greet", "{\"name\":\"Maegae\"}", "text Hello, Maegae");
-            case "smoke.Box" -> check(invokers, "kind", "{}", "text box");
-            default -> throw new IllegalStateException("Unexpected provider " + provider);
-        }
-    }
-
-    private static void check(final Map<String, ToolInvoker> invokers, final String tool, final String json,
+    private static void check(final ToolRegistry registry, final String tool, final String json,
                               final String expected) {
         String actual;
         try {
             final var arguments = JsonToolArguments.of((JsonObject) CODEC.parse(json));
-            actual = "text " + invokers.get(tool).invoke(arguments).text().orElse("<empty>");
+            actual = "text " + registry.find(tool).orElseThrow().invoke(arguments).text().orElse("<empty>");
         } catch (ToolArgumentException exception) {
             actual = "ToolArgumentException argument=" + exception.argumentName();
         } catch (Exception exception) {

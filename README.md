@@ -232,21 +232,38 @@ public interface ToolProviderBinding {
 
 The processor writes `META-INF/services/dev.nexcraft.maegae.protocol.mcp.ToolProviderBinding` once, in the last round. The file lists the bindings of all providers, sorted, one per line. The file is not written if the compilation has an error. The three generated classes of a provider are generated together, or not at all.
 
-The future runtime will find the bindings with `java.util.ServiceLoader`. The runtime is **not implemented yet**. Maegae never uses reflection to find or call Tool methods. Binding discovery uses `ServiceLoader`, and the generated code calls the Tool methods directly.
+The Tool registry (see below) finds the bindings with `java.util.ServiceLoader`. Maegae never uses reflection to find or call Tool methods. Binding discovery uses `ServiceLoader`, and the generated code calls the Tool methods directly.
 
 **Binding limitations.**
 
-- The runtime must match the exact provider class. Subclasses and anonymous classes are not supported.
+- The registry matches the exact provider class. Subclasses and anonymous classes are not supported.
 - Discovery works on the class path. With JPMS, `module-info.java` needs a `provides` clause that you write by hand.
 - The processor is an aggregating processor. When one annotated class changes, Gradle processes all annotated classes again.
-- Native image: only a smoke app was verified. It discovers three bindings with `ServiceLoader` and runs Tools in a native image, with `--no-fallback` and `--exact-reachability-metadata`, and no hand-written native-image configuration. The check ran on macOS (arm64) with GraalVM CE 25.0.4.1.1 (Java 25). The smoke test also passed in CI on `ubuntu-latest` with the `graalvm-community` distribution and Java 25, as configured in `.github/workflows/native-smoke.yml`. Netty, virtual threads, and SLF4J are not covered. This is not general native-image support.
+- Native image: only a smoke app was verified. It builds a `ToolRegistry` from three providers, runs Tools, and rejects a duplicate Tool name in a native image, with `--no-fallback` and `--exact-reachability-metadata`, and no hand-written native-image configuration. The check ran on macOS (arm64) with GraalVM CE 25.0.4.1.1 (Java 25). The smoke test also passed in CI on `ubuntu-latest` with the `graalvm-community` distribution and Java 25, as configured in `.github/workflows/native-smoke.yml`. Netty, virtual threads, and SLF4J are not covered. This is not general native-image support.
 
-**Target and status.** The v1 target is MCP protocol version 2025-11-25. The registry, the dispatcher, and the transport are **not implemented**. Today the processor generates metadata and adapters that application code can call directly. No MCP server runs yet.
+#### Tool registry (runtime, not yet wired to a server)
+
+`dev.nexcraft.maegae.runtime.ToolRegistry` takes provider instances and gives two things: `tools()`, the `ToolDefinition` list sorted by name (`String.compareTo`), and `find(name)`, the `ToolInvoker` of a Tool. No server, dispatcher, or transport exists yet, so nothing calls the registry in a running server.
+
+```java
+ToolRegistry registry = ToolRegistry.of(List.of(new CalculatorTools(), new Providers.Greeter()));
+registry.tools();        // immutable, sorted by name
+registry.find("add");    // Optional<ToolInvoker>; empty if the name is unknown
+```
+
+- **Registration.** `of` finds the generated bindings with `ServiceLoader.load(ToolProviderBinding.class)`. This call uses the thread context class loader. The registry reads the service file once, while it is created.
+- **Exact class match.** The binding must have the same class as `provider.getClass()`. A subclass or an anonymous subclass of a provider gives `IllegalStateException`. So does a class without a binding. Add `maegae-processor` to `annotationProcessor` and rebuild.
+- **Duplicate Tool names.** Two Tools with the same name give `IllegalArgumentException`. The message names the Tool and the provider classes. Registering the same class or the same instance twice gives the same error.
+- **Thread safety.** The registry is immutable after creation, so many threads can use it. The registry does not make provider instances thread-safe. Many threads may call the same provider instance at the same time. Making the provider thread-safe is the job of the developer.
+- **Input.** `null` or a `null` element gives `NullPointerException`. An empty collection gives an empty registry. Later changes to the input collection do not change the registry.
+- **No stability guarantee.** The `runtime` package is for internal use by Maegae. Classes in it are public only because the future server class needs them. Do not depend on it in application code.
+
+**Target and status.** The v1 target is MCP protocol version 2025-11-25. The dispatcher and the transport are **not implemented**. A registry exists, but nothing uses it yet. Today the processor generates metadata and adapters that application code can call directly. No MCP server runs yet.
 
 **Limitations.**
 
 - Local and anonymous classes are not discovered. The compiler API shows only declarations that are visible in a round, and a `@Tool` method in a local class may be neither generated nor rejected.
-- Duplicate Tool names across different provider classes are not detected. Each provider is generated on its own. The Tool registry will check this.
+- The processor does not detect duplicate Tool names across different provider classes, because it generates each provider on its own. `ToolRegistry` detects them when it is created.
 - `structuredContent` and `outputSchema` are not generated. A Tool result is one text value.
 - POJOs, records, collections, arrays, maps, enums, `Optional`, `char`, and parameterized types are not supported as parameters or return values.
 - Maegae claims `@Tool` and `@Arg`, so processors that run after it do not see these annotations.
