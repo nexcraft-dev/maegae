@@ -3,6 +3,7 @@ package dev.nexcraft.maegae.architecture;
 import com.tngtech.archunit.base.DescribedPredicate;
 import com.tngtech.archunit.core.domain.JavaClass;
 import com.tngtech.archunit.core.domain.JavaCodeUnit;
+import com.tngtech.archunit.core.domain.JavaMethodCall;
 import com.tngtech.archunit.core.domain.JavaModifier;
 import com.tngtech.archunit.core.domain.JavaType;
 import com.tngtech.archunit.lang.ArchCondition;
@@ -111,6 +112,26 @@ final class CoreArchitectureRules {
         }
     }).should().beFreeOfCycles()
             .as("Core packages must be free of cycles")
+            .allowEmptyShould(true);
+
+    static final ArchRule RUNTIME_WITHOUT_REFLECTION = noClasses().that().resideInAPackage(BASE + ".runtime..")
+            .should().dependOnClassesThat().resideInAPackage("java.lang.reflect..")
+            .as("Runtime must not use java.lang.reflect")
+            .allowEmptyShould(true);
+
+    static final ArchRule RUNTIME_WITHOUT_CLASS_FOR_NAME = noClasses().that().resideInAPackage(BASE + ".runtime..")
+            .should().callMethodWhere(new DescribedPredicate<JavaMethodCall>("the target is Class.forName") {
+                @Override
+                public boolean test(JavaMethodCall call) {
+                    return call.getTargetOwner().isEquivalentTo(Class.class) && call.getName().equals("forName");
+                }
+            })
+            .as("Runtime must not call Class.forName")
+            .allowEmptyShould(true);
+
+    static final ArchRule RUNTIME_IS_NOT_USED = noClasses().that().resideOutsideOfPackage(BASE + ".runtime..")
+            .should().dependOnClassesThat().resideInAPackage(BASE + ".runtime..")
+            .as("No class outside the runtime package may depend on it")
             .allowEmptyShould(true);
 
     private static void checkCodeUnit(JavaCodeUnit member, ConditionEvents events) {

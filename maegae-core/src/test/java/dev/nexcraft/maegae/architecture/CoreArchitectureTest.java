@@ -51,4 +51,19 @@ class CoreArchitectureTest {
     void corePackagesAreAcyclic() {
         CoreArchitectureRules.NO_PACKAGE_CYCLES.check(PRODUCTION);
     }
+
+    @Test
+    void runtimeDoesNotUseReflection() {
+        CoreArchitectureRules.RUNTIME_WITHOUT_REFLECTION.check(PRODUCTION);
+    }
+
+    @Test
+    void runtimeDoesNotCallClassForName() {
+        CoreArchitectureRules.RUNTIME_WITHOUT_CLASS_FOR_NAME.check(PRODUCTION);
+    }
+
+    @Test
+    void nothingOutsideRuntimeDependsOnRuntime() {
+        CoreArchitectureRules.RUNTIME_IS_NOT_USED.check(PRODUCTION);
+    }
 }

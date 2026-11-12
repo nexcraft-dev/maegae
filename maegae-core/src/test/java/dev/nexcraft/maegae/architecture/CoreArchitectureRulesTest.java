@@ -6,6 +6,7 @@ import com.tngtech.archunit.lang.ArchRule;
 import dev.nexcraft.maegae.CoreFixtures;
 import dev.nexcraft.maegae.annotation.AnnotationFixtures;
 import dev.nexcraft.maegae.protocol.ProtocolFixtures;
+import dev.nexcraft.maegae.runtime.RuntimeFixtures;
 import dev.nexcraft.maegae.tool.ToolFixtures;
 import dev.nexcraft.maegae.transport.TransportFixtures;
 import org.junit.jupiter.api.Test;
@@ -25,7 +26,8 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class CoreArchitectureRulesTest {
     private static final List<ArchRule> RULES = List.of(CORE_INDEPENDENCE, INTERNAL_ENCAPSULATION,
-            TRANSPORT_INDEPENDENCE, ANNOTATION_INDEPENDENCE, NO_PACKAGE_CYCLES);
+            TRANSPORT_INDEPENDENCE, ANNOTATION_INDEPENDENCE, NO_PACKAGE_CYCLES,
+            RUNTIME_WITHOUT_REFLECTION, RUNTIME_WITHOUT_CLASS_FOR_NAME, RUNTIME_IS_NOT_USED);
 
     @Test
     void allRulesAcceptEmptyProductionOutput(@TempDir Path directory) {
@@ -151,6 +153,27 @@ class CoreArchitectureRulesTest {
                 "Only the supplied main output is scanned, even when test fixtures are on the classpath");
         AssertionError failure = assertThrows(AssertionError.class, () -> CORE_INDEPENDENCE.check(classes));
         assertTrue(failure.getMessage().contains("io.netty.fixture.NetworkFixture"), failure.getMessage());
+    }
+
+    @ParameterizedTest(name = "runtime rule: {1}")
+    @MethodSource("runtimeViolations")
+    void detectsForbiddenRuntimeUsage(ArchRule rule, Class<?> fixture, String target) {
+        assertViolation(rule, fixture, target);
+    }
+
+    static Stream<Arguments> runtimeViolations() {
+        return Stream.of(
+                Arguments.of(RUNTIME_WITHOUT_REFLECTION, RuntimeFixtures.UsesReflection.class, "java.lang.reflect.Method"),
+                Arguments.of(RUNTIME_WITHOUT_CLASS_FOR_NAME, RuntimeFixtures.UsesClassForName.class, "Class.forName"),
+                Arguments.of(RUNTIME_IS_NOT_USED, CoreFixtures.RuntimeDependency.class, "runtime.RuntimeFixtures$Inside"));
+    }
+
+    @Test
+    void runtimeRulesAcceptCleanRuntimeClasses() {
+        var classes = new ClassFileImporter().importClasses(RuntimeFixtures.Inside.class, RuntimeFixtures.UsesCoreContracts.class);
+        RUNTIME_WITHOUT_REFLECTION.check(classes);
+        RUNTIME_WITHOUT_CLASS_FOR_NAME.check(classes);
+        RUNTIME_IS_NOT_USED.check(classes);
     }
 
     private static void assertViolation(ArchRule rule, Class<?> fixture, String target) {
