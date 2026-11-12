@@ -78,4 +78,7 @@ public final class CoreFixtures {
     public static class BootstrapCycle {
         private dev.nexcraft.maegae.tool.ToolFixtures.BootstrapCycle tool;
     }
+    public static class RuntimeDependency {
+        private dev.nexcraft.maegae.runtime.RuntimeFixtures.Inside inside;
+    }
 }
