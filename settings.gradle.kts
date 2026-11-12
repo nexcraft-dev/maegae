@@ -12,4 +12,5 @@ include(
     "maegae-processor",
     "maegae-transport-netty",
     "maegae-example",
+    "maegae-native-smoke",
 )
