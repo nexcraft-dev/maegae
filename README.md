@@ -239,7 +239,7 @@ The future runtime will find the bindings with `java.util.ServiceLoader`. The ru
 - The runtime must match the exact provider class. Subclasses and anonymous classes are not supported.
 - Discovery works on the class path. With JPMS, `module-info.java` needs a `provides` clause that you write by hand.
 - The processor is an aggregating processor. When one annotated class changes, Gradle processes all annotated classes again.
-- Native image: only a smoke app was verified. It discovers three bindings with `ServiceLoader` and runs Tools in a native image, with `--no-fallback` and `--exact-reachability-metadata`, and no hand-written native-image configuration. The check ran on macOS (arm64) with GraalVM CE 25.0.4.1.1 (Java 25). The CI result is pending. This is not general native-image support.
+- Native image: only a smoke app was verified. It discovers three bindings with `ServiceLoader` and runs Tools in a native image, with `--no-fallback` and `--exact-reachability-metadata`, and no hand-written native-image configuration. The check ran on macOS (arm64) with GraalVM CE 25.0.4.1.1 (Java 25). The smoke test also passed in CI on `ubuntu-latest` with the `graalvm-community` distribution and Java 25, as configured in `.github/workflows/native-smoke.yml`. Netty, virtual threads, and SLF4J are not covered. This is not general native-image support.
 
 **Target and status.** The v1 target is MCP protocol version 2025-11-25. The registry, the dispatcher, and the transport are **not implemented**. Today the processor generates metadata and adapters that application code can call directly. No MCP server runs yet.
 
